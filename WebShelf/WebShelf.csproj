@@ -26,4 +26,9 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="System.DirectoryServices" Version="10.0.12" />
+    <PackageReference Include="System.DirectoryServices.AccountManagement" Version="10.0.12" />
+  </ItemGroup>
+
 </Project>

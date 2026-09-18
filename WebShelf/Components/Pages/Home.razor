@@ -1,7 +1,150 @@
 ﻿@page "/"
+@rendermode InteractiveServer
 
-<PageTitle>Home</PageTitle>
+@using System.DirectoryServices.AccountManagement
+@using Microsoft.AspNetCore.Components.Authorization
+@using WebShelf.Classes.Service
 
-<h1>Hello, world!</h1>
+@inject NavigationManager Navigation
+@inject AuthenticationStateProvider AuthStateProvider
 
-Welcome to your new app.
+<PageTitle>Вход в систему WebShelf</PageTitle>
+
+@if (isAuthenticated)
+{
+    <div class="alert alert-success d-flex justify-content-between align-items-center">
+        <span>Вы вошли как <strong>@currentUser</strong></span>
+        <button class="btn btn-outline-danger btn-sm" @onclick="Logout">Выйти</button>
+    </div>
+
+    <h1>Пользователи системы WebShelf</h1>
+
+    @if (users.Count == 0)
+    {
+        <div class="alert alert-warning">Пользователи не найдены.</div>
+    }
+    else
+    {
+        <table class="table table-striped table-hover">
+            <thead>
+                <tr>
+                    <th>Логин</th>
+                    <th>Отображаемое имя</th>
+                    <th>Электронная почта</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var user in users)
+                {
+                    <tr>
+                        <td>@user.SamAccountName</td>
+                        <td>@user.DisplayName</td>
+                        <td>@user.Email</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+else
+{
+    <div class="card mx-auto" style="max-width: 420px;">
+        <div class="card-header">Вход в систему</div>
+        <div class="card-body">
+            <form method="post" action="/account/login">
+                <div class="mb-3">
+                    <label class="form-label">Логин</label>
+                    <input type="text" name="username" class="form-control" required />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Пароль</label>
+                    <input type="password" name="password" class="form-control" required />
+                </div>
+                <div class="form-check mb-3">
+                    <input type="checkbox" name="rememberMe" value="true" class="form-check-input" id="rememberMe" />
+                    <label class="form-check-label" for="rememberMe">Запомнить меня</label>
+                </div>
+                <button type="submit" class="btn btn-primary w-100">Войти</button>
+            </form>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="mt-3 alert alert-danger">@errorMessage</div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private sealed record UserInfo(string SamAccountName, string DisplayName, string Email);
+
+    private class LoginModel
+    {
+        public string Username { get; set; } = "";
+        public string Password { get; set; } = "";
+        public bool RememberMe { get; set; }
+    }
+
+    private LoginModel loginModel = new();
+    private List<UserInfo> users = [];
+    private string errorMessage = string.Empty;
+    private bool isAuthenticated;
+    private string currentUser = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Читаем возможную ошибку из query-string
+        var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        if (Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query)
+            .TryGetValue("error", out var error))
+        {
+            errorMessage = error == "invalid" ? "Неверный логин или пароль." :
+                           error == "server" ? "Ошибка сервера при входе." : "Ошибка входа.";
+        }
+
+        await CheckAuth();
+        if (isAuthenticated)
+            LoadUsers();
+    }
+
+    private async Task CheckAuth()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
+        currentUser = authState.User.Identity?.Name ?? "";
+    }
+
+    private void LoadUsers()
+    {
+        if (Data.Domain is null) return;
+
+        var principals = Data.Domain.GetAllUsers();
+        try
+        {
+            users = principals
+                .Select(u => new UserInfo(
+                    u.SamAccountName ?? "",
+                    u.DisplayName ?? u.SamAccountName ?? "",
+                    u.EmailAddress ?? ""))
+                .OrderBy(u => u.DisplayName)
+                .ToList();
+        }
+        finally
+        {
+            foreach (var p in principals) p.Dispose();
+        }
+    }
+
+    private async Task Login()
+    {
+        // Отправляем форму на эндпоинт (forceLoad обязателен!)
+        var url = $"/account/login";
+        // Используем JavaScript-форму для POST, т.к. NavigationManager не умеет POST
+        // Самый простой и надёжный способ — обычная HTML-форма
+    }
+
+    private void Logout()
+    {
+        Navigation.NavigateTo("/account/logout", forceLoad: true);
+    }
+}
