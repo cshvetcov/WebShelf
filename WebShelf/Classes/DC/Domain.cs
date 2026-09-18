@@ -118,29 +118,61 @@ internal class Domain
 
     /// <summary>
     /// Проверяет учётные данные пользователя в Active Directory.
+    /// При <paramref name="guid"/> = <see langword="true"/> дополнительно проверяет,
+    /// что в атрибуте <c>info</c> пользователя указан GUID системы (<see cref="Service.Data.GUID"/>).
     /// </summary>
     /// <param name="username">Имя пользователя (логин).</param>
     /// <param name="password">Пароль пользователя.</param>
+    /// <param name="guid">
+    /// Если <see langword="true"/> (по умолчанию), проверяется соответствие пользователя GUID системы.
+    /// Если <see langword="false"/>, выполняется только проверка логина и пароля.
+    /// </param>
     /// <returns>
-    /// <see langword="true"/>, если учётные данные корректны;
+    /// <see langword="true"/>, если учётные данные корректны
+    /// (и, при <paramref name="guid"/> = <see langword="true"/>, пользователь разрешён для WebShelf);
     /// <see langword="false"/> — в противном случае.
     /// </returns>
     /// <exception cref="InvalidOperationException">
     /// Возникает, если не удалось установить соединение с контроллером домена.
     /// </exception>
-    internal bool ValidateAdCredentials(string username, string password)
+    internal bool ValidateAdCredentials(string username, string password, bool guid = true)
     {
-        if (string.IsNullOrWhiteSpace(username) || password is null)
-            return false;
+        if (string.IsNullOrWhiteSpace(username) || password is null) return false;
 
         try
         {
-            using PrincipalContext context = new(ContextType.Domain, Name);
-            return context.ValidateCredentials(username, password, ContextOptions.Negotiate);
+            // Проверка логина/пароля (контекст без сервисной учётки)
+            using (PrincipalContext authContext = new(ContextType.Domain, Name))
+            {
+                if (!authContext.ValidateCredentials(username, password, ContextOptions.Negotiate)) return false;
+            }
+
+            // Без проверки GUID — достаточно валидных учётных данных
+            if (!guid) return true;
+
+            // GUID системы должен быть задан
+            if (string.IsNullOrWhiteSpace(Service.Data.GUID)) return false;
+
+            // Для чтения атрибута info используем сервисную учётную запись
+            using PrincipalContext context = new(ContextType.Domain, Name, User, Password);
+            using UserPrincipal? user = UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, username.Trim());
+
+            if (user is null) return false;
+
+            // DirectoryEntry принадлежит UserPrincipal — отдельно не освобождаем
+            if (user.GetUnderlyingObject() is not DirectoryEntry entry) return false;
+
+            entry.RefreshCache(["info"]);
+            object? infoValue = entry.Properties["info"]?.Value;
+            string? info = infoValue?.ToString();
+
+            return !string.IsNullOrWhiteSpace(info) && string.Equals(info.Trim(), Service.Data.GUID.Trim(), StringComparison.OrdinalIgnoreCase);
         }
         catch (PrincipalServerDownException ex)
         {
-            throw new InvalidOperationException("Не удалось подключиться к Active Directory.", new InvalidOperationException($"Сервер: {Name}", ex));
+            throw new InvalidOperationException(
+                "Не удалось подключиться к Active Directory.",
+                new InvalidOperationException($"Сервер: {Name}", ex));
         }
         catch (Exception) when (true) // все остальные исключения считаем неверными учётными данными
         {

@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Service.md",
+                "file": "Описание.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Service"
+              "title": "Описание"
             }
           }
         ]
@@ -115,7 +115,7 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "Service.md",
+                "file": "Описание.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -134,7 +134,7 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "Service.md",
+                "file": "Описание.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
@@ -177,7 +177,7 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "Service.md",
+                "file": "Описание.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
@@ -206,9 +206,9 @@
   },
   "active": "226a47309a378e46",
   "lastOpenFiles": [
-    "DC.md",
+    "Service.md",
     "Classes.md",
-    "Описание.md",
-    "Service.md"
+    "DC.md",
+    "Описание.md"
   ]
 }
