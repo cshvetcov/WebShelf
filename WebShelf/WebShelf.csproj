@@ -17,4 +17,13 @@
     <DebugType>none</DebugType>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Update="Server.conf">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Server.conf.template">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

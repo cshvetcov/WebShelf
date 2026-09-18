@@ -1,0 +1,10 @@
+#Настройки для интеграции с ActiveDirectory 
+#Необходимо заполнить следующие поля для корректной работы интеграции с ActiveDirectory
+
+#Идентификатор ActiveDirectory
+guid=
+
+# Настройки для управления доменом
+domainname=
+domainuser=
+domainpass=
