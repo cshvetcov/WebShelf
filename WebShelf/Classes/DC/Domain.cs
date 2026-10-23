@@ -83,7 +83,7 @@ internal class Domain
                 // Фильтр: пользователь, включённая учётная запись, нужный GUID в поле info
                 Filter = $"(&(objectCategory=person)(objectClass=user)" +
                          $"(!(userAccountControl:1.2.840.113556.1.4.803:=2))" +
-                         $"(info={Service.Data.GUID}))",
+                         $"(info=*GUID|{Service.Data.GUID}*))",
                 PageSize = 1000,               // поддержка больших доменов
                 SearchScope = SearchScope.Subtree
             };
@@ -95,12 +95,9 @@ internal class Domain
 
             foreach (SearchResult result in results)
             {
-                string? samAccountName = result.Properties["sAMAccountName"] is { Count: > 0 } props
-                    ? props[0]?.ToString()
-                    : null;
+                string? samAccountName = result.Properties["sAMAccountName"] is { Count: > 0 } props ? props[0]?.ToString() : null;
 
-                if (string.IsNullOrWhiteSpace(samAccountName))
-                    continue;
+                if (string.IsNullOrWhiteSpace(samAccountName)) continue;
 
                 UserPrincipal? user = UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, samAccountName);
 
@@ -109,8 +106,7 @@ internal class Domain
         }
         catch (Exception ex) when (ex is not InvalidOperationException)
         {
-            throw new InvalidOperationException(
-                "Ошибка при получении списка пользователей из Active Directory.", ex);
+            throw new InvalidOperationException("Ошибка при получении списка пользователей из Active Directory.", ex);
         }
 
         return users;
@@ -153,28 +149,12 @@ internal class Domain
             // GUID системы должен быть задан
             if (string.IsNullOrWhiteSpace(Service.Data.GUID)) return false;
 
-            // Для чтения атрибута info используем сервисную учётную запись
-            using PrincipalContext context = new(ContextType.Domain, Name, User, Password);
-            using UserPrincipal? user = UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, username.Trim());
 
-            if (user is null) return false;
+            List<UserPrincipal> allUsers = GetAllUsers();
 
-            // DirectoryEntry принадлежит UserPrincipal — отдельно не освобождаем
-            if (user.GetUnderlyingObject() is not DirectoryEntry entry) return false;
-
-            entry.RefreshCache(["info"]);
-            object? infoValue = entry.Properties["info"]?.Value;
-            string? info = infoValue?.ToString();
-
-            return !string.IsNullOrWhiteSpace(info) && string.Equals(info.Trim(), Service.Data.GUID.Trim(), StringComparison.OrdinalIgnoreCase);
+            return allUsers.Any(u => string.Equals(u.SamAccountName, username.Trim(), StringComparison.OrdinalIgnoreCase));
         }
-        catch (PrincipalServerDownException ex)
-        {
-            throw new InvalidOperationException(
-                "Не удалось подключиться к Active Directory.",
-                new InvalidOperationException($"Сервер: {Name}", ex));
-        }
-        catch (Exception) when (true) // все остальные исключения считаем неверными учётными данными
+        catch
         {
             return false;
         }

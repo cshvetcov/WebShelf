@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Описание.md",
+                "file": "Визуальное оформление.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Описание"
+              "title": "Визуальное оформление"
             }
           }
         ]
@@ -204,11 +204,12 @@
       "bases:Создать новую базу": false
     }
   },
-  "active": "226a47309a378e46",
+  "active": "965b026c9250b0cc",
   "lastOpenFiles": [
+    "Описание.md",
+    "Визуальное оформление.md",
     "Service.md",
     "Classes.md",
-    "DC.md",
-    "Описание.md"
+    "DC.md"
   ]
 }
