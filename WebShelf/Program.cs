@@ -1,103 +1,138 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using System.Security.Claims;
+using Serilog;
+using Serilog.Events;
 using WebShelf.Classes.Service;
 using WebShelf.Components;
 
-Data.ReadConfig();
+// Ранний bootstrap-логгер (до Build)
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.AspNetCore.Components", Serilog.Events.LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Enrich.WithEnvironmentName()
+    .Enrich.WithThreadId()
+    .WriteTo.Console()
+    .WriteTo.File(
+        path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 30,
+        shared: true,
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}")
+    .CreateLogger();
 
-var builder = WebApplication.CreateBuilder(args);
-
-#region Аутентификация через куки
-builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-    .AddCookie(options =>
-    {
-        options.LoginPath = "/";
-        options.AccessDeniedPath = "/";
-        options.ExpireTimeSpan = TimeSpan.FromHours(8);
-        options.SlidingExpiration = true;
-        options.Cookie.Name = "WebShelf.Auth";
-        options.Cookie.HttpOnly = true;
-        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
-    });
-
-builder.Services.AddAuthorization();
-builder.Services.AddCascadingAuthenticationState();
-builder.Services.AddHttpContextAccessor();
-#endregion
-
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
-
-var app = builder.Build();
-
-app.MapPost("/account/login", async (HttpContext context, IConfiguration config) =>
+try
 {
-    var form = await context.Request.ReadFormAsync();
-    string? username = form["username"];
-    string? password = form["password"];
-    bool rememberMe = form["rememberMe"] == "true";
+    Log.Information("WebShelf запускается...");
 
-    if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null)
-        return Results.Redirect("/?error=invalid");
+    Data.ReadConfig();
 
-    try
+    var builder = WebApplication.CreateBuilder(args);
+
+    #region Аутентификация через куки
+    builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+        .AddCookie(options =>
+        {
+            options.LoginPath = "/";
+            options.AccessDeniedPath = "/";
+            options.ExpireTimeSpan = TimeSpan.FromHours(8);
+            options.SlidingExpiration = true;
+            options.Cookie.Name = "WebShelf.Auth";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        });
+
+    builder.Services.AddAuthorization();
+    builder.Services.AddCascadingAuthenticationState();
+    builder.Services.AddHttpContextAccessor();
+    #endregion
+
+    builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+
+    var app = builder.Build();
+
+    app.MapPost("/account/login", async (HttpContext context, IConfiguration config) =>
     {
-        bool isValid = Data.Domain.ValidateAdCredentials(username.Trim(), password);
-        if (!isValid)
+        var form = await context.Request.ReadFormAsync();
+        string? username = form["username"];
+        string? password = form["password"];
+        bool rememberMe = form["rememberMe"] == "true";
+
+        if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null)
             return Results.Redirect("/?error=invalid");
 
-        var claims = new List<Claim>
+        try
+        {
+            bool isValid = Data.Domain.ValidateAdCredentials(username.Trim(), password);
+            if (!isValid)
+                return Results.Redirect("/?error=invalid");
+
+            var claims = new List<Claim>
         {
             new(ClaimTypes.Name, username.Trim()),
             new(ClaimTypes.NameIdentifier, username.Trim())
         };
 
-        var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-        var principal = new ClaimsPrincipal(identity);
+            var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+            var principal = new ClaimsPrincipal(identity);
 
-        var props = new AuthenticationProperties
+            var props = new AuthenticationProperties
+            {
+                IsPersistent = rememberMe,
+                ExpiresUtc = rememberMe
+                    ? DateTimeOffset.UtcNow.AddDays(14)
+                    : DateTimeOffset.UtcNow.AddHours(8)
+            };
+
+            await context.SignInAsync(
+                CookieAuthenticationDefaults.AuthenticationScheme,
+                principal,
+                props);
+
+            return Results.Redirect("/");
+        }
+        catch
         {
-            IsPersistent = rememberMe,
-            ExpiresUtc = rememberMe
-                ? DateTimeOffset.UtcNow.AddDays(14)
-                : DateTimeOffset.UtcNow.AddHours(8)
-        };
+            return Results.Redirect("/?error=server");
+        }
+    });
 
-        await context.SignInAsync(
-            CookieAuthenticationDefaults.AuthenticationScheme,
-            principal,
-            props);
-
-        return Results.Redirect("/");
-    }
-    catch
+    app.MapGet("/account/logout", async (HttpContext context) =>
     {
-        return Results.Redirect("/?error=server");
+        await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return Results.Redirect("/");
+    });
+
+
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    if (!app.Environment.IsDevelopment())
+    {
+        app.UseExceptionHandler("/Error", createScopeForErrors: true);
+        app.UseHsts();
     }
-});
+    app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
+    app.UseHttpsRedirection();
 
-app.MapGet("/account/logout", async (HttpContext context) =>
-{
-    await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    return Results.Redirect("/");
-});
+    app.UseAntiforgery();
 
+    app.MapStaticAssets();
+    app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
-app.UseAuthentication();
-app.UseAuthorization();
-
-if (!app.Environment.IsDevelopment())
-{
-    app.UseExceptionHandler("/Error", createScopeForErrors: true);
-    app.UseHsts();
+    app.Run();
 }
-app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
-app.UseHttpsRedirection();
+catch(Exception ex)
+{
+    Log.Fatal(ex, "Ошибка при запуске WebShelf");
+    throw;
+}
+finally
+{
+    Log.CloseAndFlush();
+}
 
-app.UseAntiforgery();
 
-app.MapStaticAssets();
-app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
-
-app.Run();
 

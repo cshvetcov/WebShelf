@@ -128,36 +128,51 @@ internal class Domain
     /// (и, при <paramref name="guid"/> = <see langword="true"/>, пользователь разрешён для WebShelf);
     /// <see langword="false"/> — в противном случае.
     /// </returns>
-    /// <exception cref="InvalidOperationException">
-    /// Возникает, если не удалось установить соединение с контроллером домена.
-    /// </exception>
     internal bool ValidateAdCredentials(string username, string password, bool guid = true)
     {
         if (string.IsNullOrWhiteSpace(username) || password is null) return false;
 
         try
         {
-            // Проверка логина/пароля (контекст без сервисной учётки)
-            using (PrincipalContext authContext = new(ContextType.Domain, Name))
+            if (string.IsNullOrWhiteSpace(username) || password is null)
+                return false;
+
+            try
             {
-                if (!authContext.ValidateCredentials(username, password, ContextOptions.Negotiate)) return false;
+                using var authContext = new PrincipalContext(ContextType.Domain, Name);
+                if (!authContext.ValidateCredentials(username, password, ContextOptions.Negotiate))
+                    return false;
+
+                if (!guid)
+                    return true;
+
+                if (string.IsNullOrWhiteSpace(Service.Data.GUID))
+                    return false;
+
+                // Проверяем только нужного пользователя
+                using PrincipalContext context = new PrincipalContext(ContextType.Domain, Name, User, Password);
+                UserPrincipal user = UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, username.Trim());
+
+                if (user is null) return false;
+
+                // Получаем атрибут info напрямую
+                using var entry = (DirectoryEntry)user.GetUnderlyingObject();
+                string info = entry.Properties["info"]?.Value?.ToString() ?? "";
+
+                return info.Contains($"GUID|{Service.Data.GUID}", StringComparison.OrdinalIgnoreCase);
             }
-
-            // Без проверки GUID — достаточно валидных учётных данных
-            if (!guid) return true;
-
-            // GUID системы должен быть задан
-            if (string.IsNullOrWhiteSpace(Service.Data.GUID)) return false;
-
-
-            List<UserPrincipal> allUsers = GetAllUsers();
-
-            return allUsers.Any(u => string.Equals(u.SamAccountName, username.Trim(), StringComparison.OrdinalIgnoreCase));
+            catch (Exception)
+            {
+                // Можно логировать исключение
+                return false;
+            }
         }
         catch
         {
             return false;
         }
     }
+
+
 }
 
