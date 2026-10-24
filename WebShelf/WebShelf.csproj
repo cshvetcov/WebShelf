@@ -36,4 +36,8 @@
     <PackageReference Include="System.DirectoryServices.AccountManagement" Version="10.0.12" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Using Include="Serilog" />
+  </ItemGroup>
+
 </Project>

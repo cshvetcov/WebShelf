@@ -4,6 +4,15 @@ using System.DirectoryServices.AccountManagement;
 namespace WebShelf.Classes.DC;
 
 /// <summary>
+/// Краткая информация о пользователе Active Directory,
+/// необходимая для отображения в WebShelf.
+/// </summary>
+/// <param name="SamAccountName">Логин (sAMAccountName).</param>
+/// <param name="DisplayName">Отображаемое имя.</param>
+/// <param name="Email">Адрес электронной почты (атрибут mail).</param>
+internal sealed record AdUserInfo(string SamAccountName, string DisplayName, string Email);
+
+/// <summary>
 /// Представляет домен Active Directory и предоставляет методы
 /// для получения пользователей системы и проверки учётных данных.
 /// Используется в браузерном приложении WebShelf для работы
@@ -11,6 +20,8 @@ namespace WebShelf.Classes.DC;
 /// </summary>
 internal class Domain
 {
+    private const string ClassName = "WebShelf.Classes.DC.Domain";
+
     /// <summary>
     /// Имя домена (FQDN), например: "company.local".
     /// </summary>
@@ -22,14 +33,15 @@ internal class Domain
     internal string User { get; }
 
     /// <summary>
-    /// Пароль сервисной учётной записи.
-    /// </summary>
-    internal string Password { get; }
-
-    /// <summary>
     /// LDAP-путь к корню домена (используется при поиске объектов).
     /// </summary>
     internal string Path { get; }
+
+    /// <summary>
+    /// Пароль сервисной учётной записи.
+    /// Хранится в приватном поле для обеспечения безопасности.
+    /// </summary>
+    private readonly string _password;
 
     /// <summary>
     /// Создаёт экземпляр класса <see cref="Domain"/>.
@@ -46,70 +58,101 @@ internal class Domain
             throw new ArgumentException("Имя домена не может быть пустым.", nameof(domain));
         if (string.IsNullOrWhiteSpace(user))
             throw new ArgumentException("Имя пользователя не может быть пустым.", nameof(user));
-        if (password is null)
-            throw new ArgumentNullException(nameof(password));
+        if (string.IsNullOrWhiteSpace(password))
+            throw new ArgumentException("Пароль не может быть пустым.", nameof(password));
 
         Name = domain.Trim();
         User = user.Trim();
-        Password = password;
+        _password = password;
 
         // Формируем LDAP-путь к корню домена (DC=...)
-        IEnumerable<string> dcParts = Name.Split('.', StringSplitOptions.RemoveEmptyEntries).Select(p => $"DC={p}");
+        IEnumerable<string> dcParts = Name
+            .Split('.', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => $"DC={p}");
         Path = $"LDAP://{string.Join(",", dcParts)}";
+
+        Log.Debug("Создан экземпляр Domain. Domain={Domain}, User={User}, Path={Path}",
+            Name, User, Path);
     }
 
     /// <summary>
-    /// Возвращает список пользователей Active Directory, которые разрешены
-    /// для работы в системе WebShelf.
+    /// Возвращает список пользователей Active Directory, разрешённых для работы в WebShelf.
     /// Пользователь считается разрешённым, если:
     /// - учётная запись включена;
     /// - в атрибуте <c>info</c> указан GUID системы (<see cref="Service.Data.GUID"/>).
     /// Поиск выполняется на стороне контроллера домена с постраничной выборкой.
+    /// Загружаются только атрибуты sAMAccountName, displayName и mail.
     /// </summary>
-    /// <returns>Список объектов <see cref="UserPrincipal"/>.</returns>
+    /// <returns>Список <see cref="AdUserInfo"/>.</returns>
     /// <exception cref="InvalidOperationException">
     /// Возникает при ошибках подключения к Active Directory или выполнения поиска.
     /// </exception>
-    internal List<UserPrincipal> GetAllUsers()
+    internal IReadOnlyList<AdUserInfo> GetAllUsers()
     {
-        List<UserPrincipal> users = [];
+        const string method = nameof(GetAllUsers);
+        List<AdUserInfo> users = [];
 
         try
         {
-            using PrincipalContext context = new(ContextType.Domain, Name, User, Password);
-            using DirectoryEntry searchRoot = new(Path, User, Password);
+            Log.Information("Начало получения списка пользователей AD. Domain={Domain}", Name);
+
+            using DirectoryEntry searchRoot = new(Path, User, _password);
             using DirectorySearcher searcher = new(searchRoot)
             {
                 // Фильтр: пользователь, включённая учётная запись, нужный GUID в поле info
                 Filter = $"(&(objectCategory=person)(objectClass=user)" +
                          $"(!(userAccountControl:1.2.840.113556.1.4.803:=2))" +
                          $"(info=*GUID|{Service.Data.GUID}*))",
-                PageSize = 1000,               // поддержка больших доменов
+                PageSize = 1000,
                 SearchScope = SearchScope.Subtree
             };
 
-            // Загружаем только необходимые атрибуты
             searcher.PropertiesToLoad.Add("sAMAccountName");
+            searcher.PropertiesToLoad.Add("displayName");
+            searcher.PropertiesToLoad.Add("mail");
 
             using SearchResultCollection results = searcher.FindAll();
 
             foreach (SearchResult result in results)
             {
-                string? samAccountName = result.Properties["sAMAccountName"] is { Count: > 0 } props ? props[0]?.ToString() : null;
+                string? sam = GetProperty(result, "sAMAccountName");
+                if (string.IsNullOrWhiteSpace(sam))
+                {
+                    Log.Debug("Пропущена запись без sAMAccountName. Domain={Domain}", Name);
+                    continue;
+                }
 
-                if (string.IsNullOrWhiteSpace(samAccountName)) continue;
+                string displayName = GetProperty(result, "displayName") ?? sam;
+                string email = GetProperty(result, "mail") ?? string.Empty;
 
-                UserPrincipal? user = UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, samAccountName);
-
-                if (user is not null) users.Add(user);
+                users.Add(new AdUserInfo(sam, displayName, email));
             }
+
+            Log.Information(
+                "Список пользователей AD успешно получен. Domain={Domain}, Count={Count}",
+                Name, users.Count);
+
+            return users.AsReadOnly();
+        }
+        catch (PrincipalServerDownException ex)
+        {
+            Log.Error(ex,
+                "Контроллер домена недоступен при получении пользователей. Class={Class}, Method={Method}, Domain={Domain}",
+                ClassName, method, Name);
+
+            throw new InvalidOperationException(
+                "Не удалось подключиться к Active Directory.",
+                new InvalidOperationException($"Сервер: {Name}", ex));
         }
         catch (Exception ex) when (ex is not InvalidOperationException)
         {
-            throw new InvalidOperationException("Ошибка при получении списка пользователей из Active Directory.", ex);
-        }
+            Log.Error(ex,
+                "Ошибка при получении списка пользователей из Active Directory. Class={Class}, Method={Method}, Domain={Domain}",
+                ClassName, method, Name);
 
-        return users;
+            throw new InvalidOperationException(
+                "Ошибка при получении списка пользователей из Active Directory.", ex);
+        }
     }
 
     /// <summary>
@@ -128,51 +171,131 @@ internal class Domain
     /// (и, при <paramref name="guid"/> = <see langword="true"/>, пользователь разрешён для WebShelf);
     /// <see langword="false"/> — в противном случае.
     /// </returns>
+    /// <exception cref="InvalidOperationException">
+    /// Возникает, если не удалось установить соединение с контроллером домена.
+    /// </exception>
     internal bool ValidateAdCredentials(string username, string password, bool guid = true)
     {
-        if (string.IsNullOrWhiteSpace(username) || password is null) return false;
+        const string method = nameof(ValidateAdCredentials);
+
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password))
+        {
+            Log.Warning(
+                "Пустые учётные данные при проверке. Class={Class}, Method={Method}, UsernameEmpty={UsernameEmpty}, PasswordEmpty={PasswordEmpty}",
+                ClassName, method,
+                string.IsNullOrWhiteSpace(username),
+                string.IsNullOrEmpty(password));
+            return false;
+        }
+
+        string normalizedUser = username.Trim();
 
         try
         {
-            if (string.IsNullOrWhiteSpace(username) || password is null)
-                return false;
+            Log.Debug(
+                "Начало проверки учётных данных. Domain={Domain}, Username={Username}, CheckGuid={CheckGuid}",
+                Name, normalizedUser, guid);
 
-            try
+            // Проверка логина/пароля (контекст без сервисной учётки)
+            using (PrincipalContext authContext = new(ContextType.Domain, Name))
             {
-                using var authContext = new PrincipalContext(ContextType.Domain, Name);
-                if (!authContext.ValidateCredentials(username, password, ContextOptions.Negotiate))
+                if (!authContext.ValidateCredentials(normalizedUser, password, ContextOptions.Negotiate))
+                {
+                    Log.Warning(
+                        "Неверные учётные данные. Domain={Domain}, Username={Username}",
+                        Name, normalizedUser);
                     return false;
-
-                if (!guid)
-                    return true;
-
-                if (string.IsNullOrWhiteSpace(Service.Data.GUID))
-                    return false;
-
-                // Проверяем только нужного пользователя
-                using PrincipalContext context = new PrincipalContext(ContextType.Domain, Name, User, Password);
-                UserPrincipal user = UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, username.Trim());
-
-                if (user is null) return false;
-
-                // Получаем атрибут info напрямую
-                using var entry = (DirectoryEntry)user.GetUnderlyingObject();
-                string info = entry.Properties["info"]?.Value?.ToString() ?? "";
-
-                return info.Contains($"GUID|{Service.Data.GUID}", StringComparison.OrdinalIgnoreCase);
+                }
             }
-            catch (Exception)
+
+            // Без проверки GUID — достаточно валидных учётных данных
+            if (!guid)
             {
-                // Можно логировать исключение
+                Log.Information(
+                    "Учётные данные подтверждены (без проверки GUID). Domain={Domain}, Username={Username}",
+                    Name, normalizedUser);
+                return true;
+            }
+
+            // GUID системы должен быть задан
+            if (string.IsNullOrWhiteSpace(Service.Data.GUID))
+            {
+                Log.Error(
+                    "GUID системы не задан. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                    ClassName, method, Name, normalizedUser);
                 return false;
             }
+
+            // Для чтения атрибута info используем сервисную учётную запись
+            using PrincipalContext context = new(ContextType.Domain, Name, User, _password);
+            using UserPrincipal? user = UserPrincipal.FindByIdentity(
+                context, IdentityType.SamAccountName, normalizedUser);
+
+            if (user is null)
+            {
+                Log.Warning(
+                    "Пользователь не найден в AD после успешной аутентификации. Domain={Domain}, Username={Username}",
+                    Name, normalizedUser);
+                return false;
+            }
+
+            // DirectoryEntry принадлежит UserPrincipal — отдельно не освобождаем
+            if (user.GetUnderlyingObject() is not DirectoryEntry entry)
+            {
+                Log.Warning(
+                    "Не удалось получить DirectoryEntry для пользователя. Domain={Domain}, Username={Username}",
+                    Name, normalizedUser);
+                return false;
+            }
+
+            entry.RefreshCache(["info"]);
+            object? infoValue = entry.Properties["info"]?.Value;
+            string info = infoValue?.ToString() ?? string.Empty;
+
+            bool allowed = info.Contains($"GUID|{Service.Data.GUID}", StringComparison.OrdinalIgnoreCase);
+
+            if (allowed)
+            {
+                Log.Information(
+                    "Учётные данные и GUID подтверждены. Domain={Domain}, Username={Username}",
+                    Name, normalizedUser);
+            }
+            else
+            {
+                Log.Warning(
+                    "Пользователь не разрешён для WebShelf (GUID не найден в info). Domain={Domain}, Username={Username}",
+                    Name, normalizedUser);
+            }
+
+            return allowed;
         }
-        catch
+        catch (PrincipalServerDownException ex)
         {
+            Log.Error(ex,
+                "Контроллер домена недоступен при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                ClassName, method, Name, normalizedUser);
+
+            throw new InvalidOperationException(
+                "Не удалось подключиться к Active Directory.",
+                new InvalidOperationException($"Сервер: {Name}", ex));
+        }
+        catch (Exception ex)
+        {
+            // Остальные исключения считаем неверными учётными данными / временной ошибкой
+            Log.Error(ex,
+                "Ошибка при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                ClassName, method, Name, normalizedUser);
             return false;
         }
     }
 
-
+    /// <summary>
+    /// Извлекает строковое значение указанного атрибута из <see cref="SearchResult"/>.
+    /// </summary>
+    private static string? GetProperty(SearchResult result, string propertyName)
+    {
+        if (result.Properties[propertyName] is { Count: > 0 } props)
+            return props[0]?.ToString();
+        return null;
+    }
 }
-

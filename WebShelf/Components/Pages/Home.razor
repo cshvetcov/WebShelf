@@ -118,21 +118,15 @@ else
     {
         if (Data.Domain is null) return;
 
-        var principals = Data.Domain.GetAllUsers();
-        try
-        {
-            users = principals
-                .Select(u => new UserInfo(
-                    u.SamAccountName ?? "",
-                    u.DisplayName ?? u.SamAccountName ?? "",
-                    u.EmailAddress ?? ""))
-                .OrderBy(u => u.DisplayName)
-                .ToList();
-        }
-        finally
-        {
-            foreach (var p in principals) p.Dispose();
-        }
+        var adUsers = Data.Domain.GetAllUsers();
+
+        users = adUsers
+            .Select(u => new UserInfo(
+                u.SamAccountName,
+                u.DisplayName,
+                u.Email))
+            .OrderBy(u => u.DisplayName)
+            .ToList();
     }
 
     private async Task Login()

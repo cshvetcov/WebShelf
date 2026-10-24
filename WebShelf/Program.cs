@@ -1,8 +1,6 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using System.Security.Claims;
-using Serilog;
-using Serilog.Events;
 using WebShelf.Classes.Service;
 using WebShelf.Components;
 
@@ -60,8 +58,7 @@ try
         string? password = form["password"];
         bool rememberMe = form["rememberMe"] == "true";
 
-        if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null)
-            return Results.Redirect("/?error=invalid");
+        if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null) return Results.Redirect("/?error=invalid");
 
         try
         {
