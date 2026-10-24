@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using Serilog;
 using WebShelf.Classes.DC;
 
 namespace WebShelf.Classes.Service;
@@ -45,7 +46,7 @@ internal static class Data
     /// </summary>
     /// <returns>
     /// <see langword="true"/>, если конфигурация прочитана успешно
-    /// (файл существует, ключи найдены, объекты созданы);
+    /// (файл существует, ключи найдены, объекты созданы, домен доступен);
     /// <see langword="false"/> — при любой ошибке.
     /// </returns>
     internal static bool ReadConfig()
@@ -173,7 +174,9 @@ internal static class Data
     }
 
     /// <summary>
-    /// Инициализирует <see cref="Domain"/> из словаря конфигурации.
+    /// Инициализирует <see cref="Domain"/> из словаря конфигурации
+    /// и проверяет доступность контроллера домена через сервисную учётную запись
+    /// (без проверки GUID).
     /// </summary>
     private static bool TryInitDomain(Dictionary<string, string> config)
     {
@@ -211,6 +214,21 @@ internal static class Data
             Log.Information(
                 "Домен инициализирован. Domain={Domain}, User={User}. Class={Class}, Method={Method}",
                 Domain.Name, Domain.User, ClassName, method);
+
+            // Проверка доступности AD: валидация сервисной учётки без учёта GUID
+            bool isAvailable = Domain.ValidateAdCredentials(domainUser, domainPass, guid: false);
+            if (!isAvailable)
+            {
+                Log.Error(
+                    "Домен недоступен или сервисная учётная запись невалидна. Domain={Domain}, User={User}. Class={Class}, Method={Method}",
+                    Domain.Name, Domain.User, ClassName, method);
+                Domain = null;
+                return false;
+            }
+
+            Log.Information(
+                "Доступность домена подтверждена. Domain={Domain}. Class={Class}, Method={Method}",
+                Domain.Name, ClassName, method);
 
             return true;
         }

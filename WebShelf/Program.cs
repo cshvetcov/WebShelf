@@ -1,14 +1,15 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using System.Security.Claims;
+using Serilog.Events;
 using WebShelf.Classes.Service;
 using WebShelf.Components;
 
 // Ранний bootstrap-логгер (до Build)
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.AspNetCore.Components", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.WithEnvironmentName()
     .Enrich.WithThreadId()
@@ -25,7 +26,13 @@ try
 {
     Log.Information("WebShelf запускается...");
 
-    Data.ReadConfig();
+    if (!Data.ReadConfig())
+    {
+        Log.Fatal(
+            "Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}",
+            "WebShelf.Program", "Main");
+        Environment.Exit(1);
+    }
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -51,57 +58,8 @@ try
 
     var app = builder.Build();
 
-    app.MapPost("/account/login", async (HttpContext context, IConfiguration config) =>
-    {
-        var form = await context.Request.ReadFormAsync();
-        string? username = form["username"];
-        string? password = form["password"];
-        bool rememberMe = form["rememberMe"] == "true";
-
-        if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null) return Results.Redirect("/?error=invalid");
-
-        try
-        {
-            bool isValid = Data.Domain.ValidateAdCredentials(username.Trim(), password);
-            if (!isValid)
-                return Results.Redirect("/?error=invalid");
-
-            var claims = new List<Claim>
-        {
-            new(ClaimTypes.Name, username.Trim()),
-            new(ClaimTypes.NameIdentifier, username.Trim())
-        };
-
-            var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-            var principal = new ClaimsPrincipal(identity);
-
-            var props = new AuthenticationProperties
-            {
-                IsPersistent = rememberMe,
-                ExpiresUtc = rememberMe
-                    ? DateTimeOffset.UtcNow.AddDays(14)
-                    : DateTimeOffset.UtcNow.AddHours(8)
-            };
-
-            await context.SignInAsync(
-                CookieAuthenticationDefaults.AuthenticationScheme,
-                principal,
-                props);
-
-            return Results.Redirect("/");
-        }
-        catch
-        {
-            return Results.Redirect("/?error=server");
-        }
-    });
-
-    app.MapGet("/account/logout", async (HttpContext context) =>
-    {
-        await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-        return Results.Redirect("/");
-    });
-
+    app.MapPost("/account/login", LoginAsync);
+    app.MapGet("/account/logout", LogoutAsync);
 
     app.UseAuthentication();
     app.UseAuthorization();
@@ -111,9 +69,9 @@ try
         app.UseExceptionHandler("/Error", createScopeForErrors: true);
         app.UseHsts();
     }
+
     app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
     app.UseHttpsRedirection();
-
     app.UseAntiforgery();
 
     app.MapStaticAssets();
@@ -121,9 +79,9 @@ try
 
     app.Run();
 }
-catch(Exception ex)
+catch (Exception ex)
 {
-    Log.Fatal(ex, "Ошибка при запуске WebShelf");
+    Log.Fatal(ex, "Исключение в {Class}.{Method}", "WebShelf.Program", "Main");
     throw;
 }
 finally
@@ -131,5 +89,69 @@ finally
     Log.CloseAndFlush();
 }
 
+/// <summary>
+/// Обработчик POST /account/login — проверка учётных данных AD и выдача cookie.
+/// </summary>
+static async Task<IResult> LoginAsync(HttpContext context, IConfiguration config)
+{
+    try
+    {
+        var form = await context.Request.ReadFormAsync();
+        string? username = form["username"];
+        string? password = form["password"];
+        bool rememberMe = form["rememberMe"] == "true";
 
+        if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null)
+            return Results.Redirect("/?error=invalid");
 
+        bool isValid = Data.Domain.ValidateAdCredentials(username.Trim(), password);
+        if (!isValid)
+            return Results.Redirect("/?error=invalid");
+
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.Name, username.Trim()),
+            new(ClaimTypes.NameIdentifier, username.Trim())
+        };
+
+        var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+        var principal = new ClaimsPrincipal(identity);
+
+        var props = new AuthenticationProperties
+        {
+            IsPersistent = rememberMe,
+            ExpiresUtc = rememberMe
+                ? DateTimeOffset.UtcNow.AddDays(14)
+                : DateTimeOffset.UtcNow.AddHours(8)
+        };
+
+        await context.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            principal,
+            props);
+
+        return Results.Redirect("/");
+    }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "Исключение в {Class}.{Method}", "WebShelf.Program", nameof(LoginAsync));
+        return Results.Redirect("/?error=server");
+    }
+}
+
+/// <summary>
+/// Обработчик GET /account/logout — выход и очистка cookie.
+/// </summary>
+static async Task<IResult> LogoutAsync(HttpContext context)
+{
+    try
+    {
+        await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return Results.Redirect("/");
+    }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "Исключение в {Class}.{Method}", "WebShelf.Program", nameof(LogoutAsync));
+        return Results.Redirect("/");
+    }
+}
