@@ -1,5 +1,6 @@
 ﻿using System.DirectoryServices;
 using System.DirectoryServices.AccountManagement;
+using WebShelf.Classes.Service;
 
 namespace WebShelf.Classes.DC;
 
@@ -61,8 +62,12 @@ internal class Domain
         if (string.IsNullOrWhiteSpace(password))
             throw new ArgumentException("Пароль не может быть пустым.", nameof(password));
 
+        string? userName = NormalizeUserName(user);
+        if (string.IsNullOrWhiteSpace(userName))
+            throw new ArgumentException($"Имя пользователя '{user}' не удалось привести к формату username@domain.", nameof(user));
+
         Name = domain.Trim();
-        User = user.Trim();
+        User = userName?.Trim() ?? string.Empty;
         _password = password;
 
         // Формируем LDAP-путь к корню домена (DC=...)
@@ -71,8 +76,7 @@ internal class Domain
             .Select(p => $"DC={p}");
         Path = $"LDAP://{string.Join(",", dcParts)}";
 
-        Log.Debug("Создан экземпляр Domain. Domain={Domain}, User={User}, Path={Path}",
-            Name, User, Path);
+        Log.Debug("Создан экземпляр Domain. Domain={Domain}, User={User}, Path={Path}", Name, User, Path);
     }
 
     /// <summary>
@@ -297,5 +301,102 @@ internal class Domain
         if (result.Properties[propertyName] is { Count: > 0 } props)
             return props[0]?.ToString();
         return null;
+    }
+
+    /// <summary>
+    /// Приводит имя пользователя к формату <c>username@domainname</c>.
+    /// </summary>
+    /// <remarks>
+    /// Домен берётся из <c>Data.Domain.Name</c>. Поддерживаются три входных формата:
+    /// <list type="bullet">
+    ///   <item><description>короткое имя без домена (<c>ivanov</c>) — домен добавляется;</description></item>
+    ///   <item><description>UPN (<c>ivanov@contoso.com</c>) — возвращается без изменений,
+    ///     если домен совпадает с <c>Data.Domain.Name</c> (без учёта регистра);</description></item>
+    ///   <item><description>down-level logon (<c>CONTOSO\ivanov</c>) — левая часть отбрасывается,
+    ///     к правой добавляется домен.</description></item>
+    /// </list>
+    /// Если имя пустое, домен не задан, формат некорректен или домен во входном UPN
+    /// не совпадает с <c>Data.Domain.Name</c>, метод записывает предупреждение в лог
+    /// и возвращает <see langword="null"/>. Исключения не выбрасываются —
+    /// любая ошибка логируется и приводит к возврату <see langword="null"/>.
+    /// </remarks>
+    /// <param name="userName">Имя пользователя, введённое в форме входа.
+    /// Может содержать ведущие и хвостовые пробелы — они отбрасываются.</param>
+    /// <returns>
+    /// Имя пользователя в формате <c>username@domainname</c> либо
+    /// <see langword="null"/>, если нормализация невозможна.
+    /// </returns>
+    /// <example>
+    /// <code>
+    /// // Data.Domain.Name == "contoso.com"
+    /// NormalizeUserName("ivanov")              // "ivanov@contoso.com"
+    /// NormalizeUserName("ivanov@contoso.com")  // "ivanov@contoso.com"
+    /// NormalizeUserName(@"CONTOSO\ivanov")     // "ivanov@contoso.com"
+    /// NormalizeUserName("ivanov@other.com")    // null
+    /// NormalizeUserName("")                    // null
+    /// </code>
+    /// </example>
+    public static string? NormalizeUserName(string userName)
+    {
+        const string methodName = nameof(NormalizeUserName);
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(userName))
+            {
+                WarnInvalid("Не задано имя пользователя.");
+                return null;
+            }
+
+            string domain = (Data.Domain?.Name ?? string.Empty).Trim();
+            if (domain.Length == 0)
+            {
+                WarnInvalid("Не задано имя домена.");
+                return null;
+            }
+
+            string user = userName.Trim();
+
+            // Нет разделителей — просто добавляем домен.
+            if (user.IndexOfAny(['@', '\\']) < 0) return $"{user}@{domain}";
+
+            // Формат UPN: user@domain
+            if (user.Contains('@'))
+            {
+                if (user.IndexOf('@') == user.LastIndexOf('@') &&                           // ровно один '@'
+                    user.EndsWith($"@{domain}", StringComparison.OrdinalIgnoreCase) &&      // заканчивается на @{domain}
+                    user.IndexOf('@') > 0 &&                                                // не начинается с '@'
+                    user.IndexOf('@') < user.Length - 1)                                    // не заканчивается '@'
+                {
+                    return user;
+                }
+                WarnInvalid("Некорректное имя пользователя.");
+                return null;
+            }
+
+            // Формат DOMAIN\user
+            int slashIndex = user.IndexOf('\\');
+            if (slashIndex <= 0 || slashIndex >= user.Length - 1)
+            {
+                WarnInvalid("Некорректное имя пользователя.");
+                return null;
+            }
+
+            string bareUser = user[(slashIndex + 1)..].Trim();
+            if (bareUser.Length == 0)
+            {
+                WarnInvalid("Некорректное имя пользователя.");
+                return null;
+            }
+
+            return $"{bareUser}@{domain}";
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Класс: {Class}, Метод: {Method}. Ошибка при нормализации имени пользователя: {UserName}.", typeof(Domain).FullName, methodName, userName);
+            return null;
+        }
+
+        void WarnInvalid(string reason) => Log.Warning("Класс: {Class}, Метод: {Method}. {Reason} Имя: {UserName}.", typeof(Domain).FullName, methodName, reason, userName);
     }
 }

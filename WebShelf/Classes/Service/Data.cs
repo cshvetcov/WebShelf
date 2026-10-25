@@ -34,8 +34,8 @@ internal static class Data
     /// <summary>
     /// Обязательные ключи конфигурации по группам.
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, string[]> RequiredKeys =
-        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, string[]> RequiredKeys =
+        new(StringComparer.OrdinalIgnoreCase)
         {
             ["Domain"] = ["domainname", "domainuser", "domainpass"],
             ["GUID"] = ["guid"]
