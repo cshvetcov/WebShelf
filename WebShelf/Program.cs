@@ -13,7 +13,7 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.FromLogContext()
     .Enrich.WithEnvironmentName()
     .Enrich.WithThreadId()
-    .WriteTo.Console()
+    .WriteTo.Debug()
     .WriteTo.File(
         path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
         rollingInterval: RollingInterval.Day,
