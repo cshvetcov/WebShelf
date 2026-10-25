@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Визуальное оформление.md",
+                "file": "Оформление/Стиль окон.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Визуальное оформление"
+              "title": "Стиль окон"
             }
           }
         ]
@@ -190,10 +190,13 @@
   },
   "active": "201aae43d6519136",
   "lastOpenFiles": [
-    "Pasted image 20261025000832.png",
-    "Важные требования к коду.md",
-    "Описание.md",
     "Визуальное оформление.md",
+    "Оформление/Стиль окон.md",
+    "Важные требования к коду.md",
+    "Images/Pasted image 20261025000832.png",
+    "Оформление",
+    "Images",
+    "Описание.md",
     "Service.md",
     "DC.md",
     "Classes.md",
