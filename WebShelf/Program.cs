@@ -34,6 +34,21 @@ try
 
     WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
+    builder.Host.UseSerilog((context, services, configuration) => configuration
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
+    .Enrich.FromLogContext()
+    .Enrich.WithEnvironmentName()
+    .Enrich.WithThreadId()
+    .WriteTo.Debug()
+    .WriteTo.File(
+        path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 30,
+        shared: true,
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}"));
+
     // Схема и порт только из Server.conf (независимо от launchSettings.json и профилей http/https)
     string listenUrl = $"{Data.Scheme}://0.0.0.0:{Data.Port}";
     builder.WebHost.UseUrls(listenUrl);
@@ -62,6 +77,8 @@ try
     builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
     WebApplication app = builder.Build();
+
+    app.UseSerilogRequestLogging();
 
     app.MapPost("/account/login", LoginAsync);
     app.MapGet("/account/logout", LogoutAsync);

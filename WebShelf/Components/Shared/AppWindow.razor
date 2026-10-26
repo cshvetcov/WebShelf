@@ -7,6 +7,7 @@
 
 @implements IAsyncDisposable
 @inject IJSRuntime Js
+@inject ILogger<AppWindow> Logger
 
 <div class="ws-window" id="@WindowElementId" style="@(string.IsNullOrEmpty(MaxWidth) ? null : $"max-width:{MaxWidth}")">
     <div class="ws-window-titlebar">
@@ -32,6 +33,7 @@
 </div>
 
 @code {
+    private const string ClassName = "WebShelf.Components.Shared.AppWindow";
     /// <summary>
     /// Заголовок окна, отображаемый в title-bar.
     /// </summary>
@@ -125,8 +127,7 @@
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
-                $"Исключение в WebShelf.Components.Shared.AppWindow.OnAfterRenderAsync: {ex.Message}");
+            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
         }
     }
 
@@ -161,8 +162,7 @@
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
-                $"Исключение в WebShelf.Components.Shared.AppWindow.DisposeAsync: {ex.Message}");
+            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
         }
     }
 }
