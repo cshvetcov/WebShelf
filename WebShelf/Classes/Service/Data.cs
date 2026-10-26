@@ -7,17 +7,23 @@ namespace WebShelf.Classes.Service;
 /// <summary>
 /// Центральное хранилище системных данных приложения WebShelf.
 /// Отвечает за чтение конфигурации (Server.conf) и предоставление
-/// экземпляра домена Active Directory и GUID системы.
+/// экземпляра домена Active Directory, GUID системы, порта и схемы (http/https).
 /// </summary>
 internal static class Data
 {
     private const string ClassName = "WebShelf.Classes.Service.Data";
 
     /// <summary>
-    /// Порт, на котором слушает HTTP-сервер.
+    /// Порт, на котором слушает HTTP(S)-сервер.
     /// <see langword="null"/>, если не задан или некорректен.
     /// </summary>
     internal static int? Port { get; private set; }
+
+    /// <summary>
+    /// Схема прослушивания: <c>http</c> или <c>https</c>.
+    /// <see langword="null"/>, если не задана или некорректна.
+    /// </summary>
+    internal static string? Scheme { get; private set; }
 
     /// <summary>
     /// Полный путь к файлу конфигурации Server.conf.
@@ -45,11 +51,13 @@ internal static class Data
         {
             ["Domain"] = ["domainname", "domainuser", "domainpass"],
             ["GUID"] = ["guid"],
-            ["Port"] = ["port"]
+            ["Port"] = ["port"],
+            ["Scheme"] = ["scheme"]
         };
 
     /// <summary>
-    /// Читает файл Server.conf и инициализирует <see cref="Domain"/> и <see cref="GUID"/>.
+    /// Читает файл Server.conf и инициализирует <see cref="Domain"/>, <see cref="GUID"/>,
+    /// <see cref="Port"/> и <see cref="Scheme"/>.
     /// </summary>
     /// <returns>
     /// <see langword="true"/>, если конфигурация прочитана успешно
@@ -69,6 +77,7 @@ internal static class Data
             Domain = null;
             GUID = null;
             Port = null;
+            Scheme = null;
 
             if (!File.Exists(ConfigFile))
             {
@@ -91,18 +100,19 @@ internal static class Data
             bool domainOk = TryInitDomain(config);
             bool guidOk = TryInitGuid(config);
             bool portOk = TryInitPort(config);
+            bool schemeOk = TryInitScheme(config);
 
-            if (!domainOk || !guidOk || !portOk)
+            if (!domainOk || !guidOk || !portOk || !schemeOk)
             {
                 Log.Error(
-                    "Конфигурация загружена частично. DomainOk={DomainOk}, GuidOk={GuidOk}, PortOk={PortOk}. Class={Class}, Method={Method}",
-                    domainOk, guidOk, portOk, ClassName, method);
+                    "Конфигурация загружена частично. DomainOk={DomainOk}, GuidOk={GuidOk}, PortOk={PortOk}, SchemeOk={SchemeOk}. Class={Class}, Method={Method}",
+                    domainOk, guidOk, portOk, schemeOk, ClassName, method);
                 return false;
             }
 
             Log.Information(
-                "Конфигурация успешно загружена. Domain={Domain}, GuidSet={GuidSet}, Port={Port}. Class={Class}, Method={Method}",
-                Domain!.Name, !string.IsNullOrWhiteSpace(GUID), Port, ClassName, method);
+                "Конфигурация успешно загружена. Domain={Domain}, GuidSet={GuidSet}, Scheme={Scheme}, Port={Port}. Class={Class}, Method={Method}",
+                Domain!.Name, !string.IsNullOrWhiteSpace(GUID), Scheme, Port, ClassName, method);
 
             return true;
         }
@@ -114,6 +124,8 @@ internal static class Data
 
             Domain = null;
             GUID = null;
+            Port = null;
+            Scheme = null;
             return false;
         }
     }
@@ -316,7 +328,7 @@ internal static class Data
 
             if (!int.TryParse(portStr.Trim(), out int port) || port < 1 || port > 65535)
             {
-                Log.Error("Некорректное значение port={PortValue}. Class={Class}, Method={Method}",portStr, ClassName, method);
+                Log.Error("Некорректное значение port={PortValue}. Class={Class}, Method={Method}", portStr, ClassName, method);
                 return false;
             }
 
@@ -330,6 +342,45 @@ internal static class Data
         {
             Log.Error(ex, "Ошибка инициализации порта. Class={Class}, Method={Method}", ClassName, method);
             Port = null;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Читает и проверяет схему (http/https) из конфигурации.
+    /// </summary>
+    private static bool TryInitScheme(Dictionary<string, string> config)
+    {
+        const string method = nameof(TryInitScheme);
+
+        try
+        {
+            if (!config.TryGetValue("scheme", out string? schemeStr) || string.IsNullOrWhiteSpace(schemeStr))
+            {
+                Log.Error("Отсутствует или пустой ключ scheme. Class={Class}, Method={Method}", ClassName, method);
+                return false;
+            }
+
+            string scheme = schemeStr.Trim().ToLowerInvariant();
+
+            if (scheme is not ("http" or "https"))
+            {
+                Log.Error(
+                    "Некорректное значение scheme={SchemeValue}. Допустимо: http, https. Class={Class}, Method={Method}",
+                    schemeStr, ClassName, method);
+                return false;
+            }
+
+            Scheme = scheme;
+
+            Log.Information("Схема сервера установлена. Scheme={Scheme}. Class={Class}, Method={Method}", Scheme, ClassName, method);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Ошибка инициализации схемы. Class={Class}, Method={Method}", ClassName, method);
+            Scheme = null;
             return false;
         }
     }

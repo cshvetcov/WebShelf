@@ -34,6 +34,13 @@ try
 
     WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
+    // Схема и порт только из Server.conf (независимо от launchSettings.json и профилей http/https)
+    string listenUrl = $"{Data.Scheme}://0.0.0.0:{Data.Port}";
+    builder.WebHost.UseUrls(listenUrl);
+    Log.Information(
+        "Прослушивание {ListenUrl} (Server.conf). Class={Class}, Method={Method}",
+        listenUrl, "WebShelf.Program", "Main");
+
     #region Аутентификация через куки
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
         .AddCookie(options =>
@@ -69,7 +76,13 @@ try
     }
 
     app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
-    app.UseHttpsRedirection();
+
+    // Редирект на HTTPS только если в Server.conf указана схема https
+    if (string.Equals(Data.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+    {
+        app.UseHttpsRedirection();
+    }
+
     app.UseAntiforgery();
 
     app.MapStaticAssets();
