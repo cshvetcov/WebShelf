@@ -28,13 +28,11 @@ try
 
     if (!Data.ReadConfig())
     {
-        Log.Fatal(
-            "Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}",
-            "WebShelf.Program", "Main");
+        Log.Fatal("Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}", "WebShelf.Program", "Main");
         Environment.Exit(1);
     }
 
-    var builder = WebApplication.CreateBuilder(args);
+    WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
     #region Аутентификация через куки
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
@@ -56,7 +54,7 @@ try
 
     builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
-    var app = builder.Build();
+    WebApplication app = builder.Build();
 
     app.MapPost("/account/login", LoginAsync);
     app.MapGet("/account/logout", LogoutAsync);

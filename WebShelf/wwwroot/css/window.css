@@ -1,0 +1,317 @@
+﻿/* =============================================================================
+   window.css — общие стили окон WebShelf
+   Требования: Визуальное оформление.md
+   Фон страницы #5F5F5F, заливка основных элементов — градиент #414042 → #0A5966
+   ============================================================================= */
+
+/* Фон страницы (применяется к body через класс ws-window-page) */
+body.ws-window-page {
+    min-height: 100vh;
+    margin: 0;
+    background-color: #5F5F5F;
+    font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #E8E8E8;
+    overflow: hidden;
+}
+
+/* Оболочка окна */
+.ws-window {
+    position: absolute;
+    width: 100%;
+    max-width: 400px;
+    border-radius: 12px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    user-select: none;
+    z-index: 10;
+}
+
+/* Заголовок окна */
+.ws-window-titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.55rem 0.9rem;
+    background: #2E2E30;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    cursor: grab;
+    color: #FFFFFF;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+    .ws-window-titlebar:active {
+        cursor: grabbing;
+    }
+
+    .ws-window-titlebar .ws-window-title-text {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        min-width: 0;
+    }
+
+    .ws-window-titlebar .ws-window-title-icon {
+        flex-shrink: 0;
+        width: 16px;
+        height: 16px;
+        border-radius: 3px;
+        background: linear-gradient(135deg, #0A5966, #414042);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.65rem;
+        font-weight: 700;
+        color: #fff;
+    }
+
+    .ws-window-titlebar .ws-window-title-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+/* Кнопка закрытия */
+.ws-window-btn-close {
+    position: relative;
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: rgba(255, 255, 255, 0.65);
+    font-size: 1.05rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    padding: 0;
+}
+
+    .ws-window-btn-close:hover {
+        background: #E74C3C;
+        color: #FFFFFF;
+    }
+
+/* Текстовый пузырь «нельзя закрыть» */
+.ws-window-close-bubble {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    min-width: 200px;
+    max-width: 240px;
+    padding: 0.55rem 0.75rem;
+    background: #1A1A1C;
+    color: #F0F0F0;
+    font-size: 0.78rem;
+    font-weight: 400;
+    line-height: 1.35;
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    white-space: normal;
+    text-align: left;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 0.18s, transform 0.18s, visibility 0.18s;
+    pointer-events: none;
+    z-index: 20;
+    cursor: default;
+}
+
+    .ws-window-close-bubble::before {
+        content: "";
+        position: absolute;
+        top: -6px;
+        right: 8px;
+        width: 10px;
+        height: 10px;
+        background: #1A1A1C;
+        border-left: 1px solid rgba(255, 255, 255, 0.12);
+        border-top: 1px solid rgba(255, 255, 255, 0.12);
+        transform: rotate(45deg);
+    }
+
+    .ws-window-close-bubble.ws-visible {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+    }
+
+/* Тело окна — градиент по требованиям проекта */
+.ws-window-body {
+    padding: 2rem 2rem 1.8rem;
+    background: linear-gradient( to top right, #414042 0%, #414042 45.3%, #0A5966 90%, #0A5966 100% );
+    user-select: text;
+}
+
+    /* ----- Типовые элементы форм внутри окон ----- */
+
+    .ws-window-body .ws-form-group {
+        margin-bottom: 1.25rem;
+    }
+
+    .ws-window-body label {
+        display: block;
+        margin-bottom: 0.4rem;
+        font-size: 0.82rem;
+        font-weight: 500;
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .ws-window-body .ws-input-wrapper {
+        position: relative;
+    }
+
+    .ws-window-body input[type="text"],
+    .ws-window-body input[type="password"] {
+        width: 100%;
+        padding: 0.75rem 1rem;
+        padding-right: 2.8rem;
+        font-size: 0.95rem;
+        color: #F0F0F0;
+        background: rgba(0, 0, 0, 0.28);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        outline: none;
+        transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+        box-sizing: border-box;
+    }
+
+        .ws-window-body input[type="text"]::placeholder,
+        .ws-window-body input[type="password"]::placeholder {
+            color: rgba(255, 255, 255, 0.35);
+        }
+
+        .ws-window-body input[type="text"]:focus,
+        .ws-window-body input[type="password"]:focus {
+            border-color: rgba(10, 89, 102, 0.8);
+            background: rgba(0, 0, 0, 0.38);
+            box-shadow: 0 0 0 3px rgba(10, 89, 102, 0.25);
+        }
+
+/* Кнопка показа/скрытия пароля */
+.ws-toggle-password {
+    position: absolute;
+    right: 0.7rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.5);
+    cursor: pointer;
+    padding: 0.25rem;
+    font-size: 1.15rem;
+    line-height: 1;
+    transition: color 0.2s;
+    width: 1.6rem;
+    height: 1.6rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+    .ws-toggle-password:hover {
+        color: rgba(255, 255, 255, 0.9);
+    }
+
+    .ws-toggle-password.ws-hidden-eye::after {
+        content: "";
+        position: absolute;
+        width: 1.35rem;
+        height: 1.5px;
+        background: currentColor;
+        transform: rotate(-40deg);
+        border-radius: 1px;
+        pointer-events: none;
+    }
+
+/* Основная кнопка действия */
+.ws-btn-primary {
+    width: 100%;
+    margin-top: 0.5rem;
+    padding: 0.85rem 1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #FFFFFF;
+    background-color: #0A5966;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.2s, background-color 0.2s;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+    .ws-btn-primary:hover {
+        background-color: #0C6A7A;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+    }
+
+    .ws-btn-primary:active {
+        transform: scale(0.98);
+    }
+
+    .ws-btn-primary:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+
+/* Сообщения */
+.ws-message {
+    margin-top: 1.1rem;
+    padding: 0.7rem 0.9rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+.ws-message-error {
+    background: rgba(180, 40, 40, 0.25);
+    border: 1px solid rgba(220, 80, 80, 0.4);
+    color: #FFB0B0;
+}
+
+.ws-message-success {
+    background: rgba(30, 120, 80, 0.25);
+    border: 1px solid rgba(60, 180, 120, 0.4);
+    color: #A0E8C0;
+}
+
+/* Чекбокс «Запомнить» */
+.ws-form-check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+    .ws-form-check input[type="checkbox"] {
+        width: 1rem;
+        height: 1rem;
+        accent-color: #0A5966;
+        cursor: pointer;
+    }
+
+/* Адаптив */
+@media (max-width: 480px) {
+    .ws-window {
+        max-width: calc(100% - 2rem);
+    }
+
+    .ws-window-body {
+        padding: 1.6rem 1.4rem 1.5rem;
+    }
+}
+
+@media (min-width: 768px) {
+    .ws-window {
+        max-width: 420px;
+    }
+}

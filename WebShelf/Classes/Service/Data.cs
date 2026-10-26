@@ -14,6 +14,12 @@ internal static class Data
     private const string ClassName = "WebShelf.Classes.Service.Data";
 
     /// <summary>
+    /// Порт, на котором слушает HTTP-сервер.
+    /// <see langword="null"/>, если не задан или некорректен.
+    /// </summary>
+    internal static int? Port { get; private set; }
+
+    /// <summary>
     /// Полный путь к файлу конфигурации Server.conf.
     /// </summary>
     internal static string ConfigFile { get; } =
@@ -38,7 +44,8 @@ internal static class Data
         new(StringComparer.OrdinalIgnoreCase)
         {
             ["Domain"] = ["domainname", "domainuser", "domainpass"],
-            ["GUID"] = ["guid"]
+            ["GUID"] = ["guid"],
+            ["Port"] = ["port"]
         };
 
     /// <summary>
@@ -61,6 +68,7 @@ internal static class Data
 
             Domain = null;
             GUID = null;
+            Port = null;
 
             if (!File.Exists(ConfigFile))
             {
@@ -82,18 +90,19 @@ internal static class Data
 
             bool domainOk = TryInitDomain(config);
             bool guidOk = TryInitGuid(config);
+            bool portOk = TryInitPort(config);
 
-            if (!domainOk || !guidOk)
+            if (!domainOk || !guidOk || !portOk)
             {
                 Log.Error(
-                    "Конфигурация загружена частично. DomainOk={DomainOk}, GuidOk={GuidOk}. Class={Class}, Method={Method}",
-                    domainOk, guidOk, ClassName, method);
+                    "Конфигурация загружена частично. DomainOk={DomainOk}, GuidOk={GuidOk}, PortOk={PortOk}. Class={Class}, Method={Method}",
+                    domainOk, guidOk, portOk, ClassName, method);
                 return false;
             }
 
             Log.Information(
-                "Конфигурация успешно загружена. Domain={Domain}, GuidSet={GuidSet}. Class={Class}, Method={Method}",
-                Domain!.Name, !string.IsNullOrWhiteSpace(GUID), ClassName, method);
+                "Конфигурация успешно загружена. Domain={Domain}, GuidSet={GuidSet}, Port={Port}. Class={Class}, Method={Method}",
+                Domain!.Name, !string.IsNullOrWhiteSpace(GUID), Port, ClassName, method);
 
             return true;
         }
@@ -286,6 +295,41 @@ internal static class Data
                 "Ошибка инициализации GUID. Class={Class}, Method={Method}",
                 ClassName, method);
             GUID = null;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Читает и проверяет порт из конфигурации.
+    /// </summary>
+    private static bool TryInitPort(Dictionary<string, string> config)
+    {
+        const string method = nameof(TryInitPort);
+
+        try
+        {
+            if (!config.TryGetValue("port", out string? portStr) || string.IsNullOrWhiteSpace(portStr))
+            {
+                Log.Error("Отсутствует или пустой ключ port. Class={Class}, Method={Method}", ClassName, method);
+                return false;
+            }
+
+            if (!int.TryParse(portStr.Trim(), out int port) || port < 1 || port > 65535)
+            {
+                Log.Error("Некорректное значение port={PortValue}. Class={Class}, Method={Method}",portStr, ClassName, method);
+                return false;
+            }
+
+            Port = port;
+
+            Log.Information("Порт сервера установлен. Port={Port}. Class={Class}, Method={Method}", Port, ClassName, method);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Ошибка инициализации порта. Class={Class}, Method={Method}", ClassName, method);
+            Port = null;
             return false;
         }
     }

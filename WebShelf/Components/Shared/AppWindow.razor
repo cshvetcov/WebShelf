@@ -1,0 +1,168 @@
+﻿@*
+    AppWindow — переиспользуемая оболочка окна WebShelf.
+    Обеспечивает заголовок, перетаскивание, кнопку закрытия и область содержимого.
+    Стили: wwwroot/css/window.css
+    Скрипт: wwwroot/js/window.js
+*@
+
+@implements IAsyncDisposable
+@inject IJSRuntime Js
+
+<div class="ws-window" id="@WindowElementId" style="@(string.IsNullOrEmpty(MaxWidth) ? null : $"max-width:{MaxWidth}")">
+    <div class="ws-window-titlebar">
+        <div class="ws-window-title-text">
+            @if (!string.IsNullOrEmpty(IconText))
+            {
+                <span class="ws-window-title-icon">@IconText</span>
+            }
+            <span class="ws-window-title-label">@Title</span>
+        </div>
+        <button type="button"
+                class="ws-window-btn-close"
+                title="Закрыть"
+                aria-label="Закрыть">
+            ×
+            <span class="ws-window-close-bubble">@CloseBubbleText</span>
+        </button>
+    </div>
+
+    <div class="ws-window-body">
+        @ChildContent
+    </div>
+</div>
+
+@code {
+    /// <summary>
+    /// Заголовок окна, отображаемый в title-bar.
+    /// </summary>
+    [Parameter]
+    public string Title { get; set; } = "WebShelf";
+
+    /// <summary>
+    /// Текст иконки в заголовке (например, «WS»). Пустая строка — иконка скрыта.
+    /// </summary>
+    [Parameter]
+    public string IconText { get; set; } = "WS";
+
+    /// <summary>
+    /// Разрешено ли реально закрывать окно. false — показывается текстовый пузырь.
+    /// </summary>
+    [Parameter]
+    public bool CanClose { get; set; }
+
+    /// <summary>
+    /// Текст пузыря, если CanClose = false.
+    /// </summary>
+    [Parameter]
+    public string CloseBubbleText { get; set; } = "Это окно не может быть закрыто";
+
+    /// <summary>
+    /// Максимальная ширина окна (CSS-значение, например «420px»).
+    /// </summary>
+    [Parameter]
+    public string? MaxWidth { get; set; }
+
+    /// <summary>
+    /// Центрировать окно при инициализации.
+    /// </summary>
+    [Parameter]
+    public bool Center { get; set; } = true;
+
+    /// <summary>
+    /// Включать класс фона страницы body.ws-window-page.
+    /// </summary>
+    [Parameter]
+    public bool ApplyPageBackground { get; set; }
+
+    /// <summary>
+    /// Содержимое тела окна.
+    /// </summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>
+    /// Уникальный id DOM-элемента окна (для JS interop).
+    /// </summary>
+    private string WindowElementId { get; } = "ws-window-" + Guid.NewGuid().ToString("N")[..8];
+
+    /// <summary>
+    /// true только после успешного вызова WebShelfWindow.init (интерактивный режим).
+    /// </summary>
+    private bool _jsInitialized;
+
+    /// <summary>
+    /// После рендера инициализирует JS. При статическом prerender interop недоступен — пропускаем.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (!firstRender || _jsInitialized)
+                return;
+
+            // JS interop доступен только в интерактивном режиме (не при static prerender).
+            if (ApplyPageBackground)
+            {
+                await Js.InvokeVoidAsync("WebShelfWindow.setPageBackground", true);
+            }
+
+            await Js.InvokeVoidAsync("WebShelfWindow.init", WindowElementId, new
+            {
+                canClose = CanClose,
+                closeBubbleText = CloseBubbleText,
+                center = Center
+            });
+
+            _jsInitialized = true;
+        }
+        catch (JSDisconnectedException)
+        {
+            // Цепь Blazor разорвана — игнорируем.
+        }
+        catch (InvalidOperationException)
+        {
+            // Статический рендер / prerender: interop нельзя вызывать — ждём интерактивный проход.
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"Исключение в WebShelf.Components.Shared.AppWindow.OnAfterRenderAsync: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Освобождает JS-ресурсы только если init реально выполнялся (интерактивный режим).
+    /// При dispose prerender-экземпляра interop недоступен — выходим без вызовов.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        // Пока JS не инициализирован (prerender / static) — ничего не вызываем.
+        if (!_jsInitialized)
+            return;
+
+        try
+        {
+            await Js.InvokeVoidAsync("WebShelfWindow.dispose", WindowElementId);
+
+            if (ApplyPageBackground)
+            {
+                await Js.InvokeVoidAsync("WebShelfWindow.setPageBackground", false);
+            }
+
+            _jsInitialized = false;
+        }
+        catch (JSDisconnectedException)
+        {
+            // Цепь уже закрыта.
+        }
+        catch (InvalidOperationException)
+        {
+            // Компонент в статическом контексте — interop недоступен.
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"Исключение в WebShelf.Components.Shared.AppWindow.DisposeAsync: {ex.Message}");
+        }
+    }
+}

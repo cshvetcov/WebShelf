@@ -62,7 +62,7 @@ internal class Domain
         if (string.IsNullOrWhiteSpace(password))
             throw new ArgumentException("Пароль не может быть пустым.", nameof(password));
 
-        string? userName = NormalizeUserName(user);
+        string? userName = NormalizeUserName(user, domain);
         if (string.IsNullOrWhiteSpace(userName))
             throw new ArgumentException($"Имя пользователя '{user}' не удалось привести к формату username@domain.", nameof(user));
 
@@ -224,7 +224,13 @@ internal class Domain
 
             // Для чтения атрибута info используем сервисную учётную запись
             using PrincipalContext context = new(ContextType.Domain, Name, User, _password);
-            using UserPrincipal? user = UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, normalizedUser);
+
+            int atIndex = normalizedUser.IndexOf('@');
+            string samAccountName = (atIndex > 0) ? normalizedUser[..atIndex] : normalizedUser;
+
+            using UserPrincipal? user = 
+                UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, samAccountName) ??
+                UserPrincipal.FindByIdentity(context, IdentityType.UserPrincipalName, normalizedUser);
 
             if (user is null)
             {
@@ -284,7 +290,7 @@ internal class Domain
     /// Приводит имя пользователя к формату <c>username@domainname</c>.
     /// </summary>
     /// <remarks>
-    /// Домен берётся из <c>Data.Domain.Name</c>. Поддерживаются три входных формата:
+    /// Домен берётся из <c>Data.Domain.Name</c> или из параметра <c>domainName</c> если указан явно. Поддерживаются три входных формата:
     /// <list type="bullet">
     ///   <item><description>короткое имя без домена (<c>ivanov</c>) — домен добавляется;</description></item>
     ///   <item><description>UPN (<c>ivanov@contoso.com</c>) — возвращается без изменений,
@@ -313,7 +319,7 @@ internal class Domain
     /// NormalizeUserName("")                    // null
     /// </code>
     /// </example>
-    public static string? NormalizeUserName(string userName)
+    public static string? NormalizeUserName(string userName, string? domainName = null)
     {
         const string methodName = nameof(NormalizeUserName);
 
@@ -325,7 +331,7 @@ internal class Domain
                 return null;
             }
 
-            string domain = (Data.Domain?.Name ?? string.Empty).Trim();
+            string domain = (domainName ?? Data.Domain?.Name ?? string.Empty).Trim();
             if (domain.Length == 0)
             {
                 WarnInvalid("Не задано имя домена.");
