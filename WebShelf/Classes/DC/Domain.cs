@@ -55,6 +55,8 @@ internal class Domain
     /// </exception>
     internal Domain(string domain, string user, string password)
     {
+        const string method = ".ctor";
+
         if (string.IsNullOrWhiteSpace(domain))
             throw new ArgumentException("Имя домена не может быть пустым.", nameof(domain));
         if (string.IsNullOrWhiteSpace(user))
@@ -76,7 +78,9 @@ internal class Domain
             .Select(p => $"DC={p}");
         Path = $"LDAP://{string.Join(",", dcParts)}";
 
-        Log.Debug("Создан экземпляр Domain. Domain={Domain}, User={User}, Path={Path}", Name, User, Path);
+        Log.Debug(
+            "Создан экземпляр Domain. Class={Class}, Method={Method}, Domain={Domain}, User={User}, Path={Path}",
+            ClassName, method, Name, User, Path);
     }
 
     /// <summary>
@@ -98,7 +102,9 @@ internal class Domain
 
         try
         {
-            Log.Information("Начало получения списка пользователей AD. Domain={Domain}", Name);
+            Log.Information(
+                "Начало получения списка пользователей AD. Class={Class}, Method={Method}, Domain={Domain}",
+                ClassName, method, Name);
 
             using DirectoryEntry searchRoot = new(Path, User, _password);
             using DirectorySearcher searcher = new(searchRoot)
@@ -122,7 +128,9 @@ internal class Domain
                 string? sam = GetProperty(result, "sAMAccountName");
                 if (string.IsNullOrWhiteSpace(sam))
                 {
-                    Log.Debug("Пропущена запись без sAMAccountName. Domain={Domain}", Name);
+                    Log.Debug(
+                        "Пропущена запись без sAMAccountName. Class={Class}, Method={Method}, Domain={Domain}",
+                        ClassName, method, Name);
                     continue;
                 }
 
@@ -133,8 +141,8 @@ internal class Domain
             }
 
             Log.Information(
-                "Список пользователей AD успешно получен. Domain={Domain}, Count={Count}",
-                Name, users.Count);
+                "Список пользователей AD успешно получен. Class={Class}, Method={Method}, Domain={Domain}, Count={Count}",
+                ClassName, method, Name, users.Count);
 
             return users.AsReadOnly();
         }
@@ -164,20 +172,6 @@ internal class Domain
     /// При <paramref name="guid"/> = <see langword="true"/> дополнительно проверяет,
     /// что в атрибуте <c>info</c> пользователя указан GUID системы (<see cref="Service.Data.GUID"/>).
     /// </summary>
-    /// <param name="username">Имя пользователя (логин).</param>
-    /// <param name="password">Пароль пользователя.</param>
-    /// <param name="guid">
-    /// Если <see langword="true"/> (по умолчанию), проверяется соответствие пользователя GUID системы.
-    /// Если <see langword="false"/>, выполняется только проверка логина и пароля.
-    /// </param>
-    /// <returns>
-    /// <see langword="true"/>, если учётные данные корректны
-    /// (и, при <paramref name="guid"/> = <see langword="true"/>, пользователь разрешён для WebShelf);
-    /// <see langword="false"/> — в противном случае.
-    /// </returns>
-    /// <exception cref="InvalidOperationException">
-    /// Возникает, если не удалось установить соединение с контроллером домена.
-    /// </exception>
     internal bool ValidateAdCredentials(string username, string password, bool guid = true)
     {
         const string method = nameof(ValidateAdCredentials);
@@ -196,14 +190,18 @@ internal class Domain
 
         try
         {
-            Log.Debug("Начало проверки учётных данных. Domain={Domain}, Username={Username}, CheckGuid={CheckGuid}", Name, normalizedUser, guid);
+            Log.Debug(
+                "Начало проверки учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}, CheckGuid={CheckGuid}",
+                ClassName, method, Name, normalizedUser, guid);
 
             // Проверка логина/пароля (контекст без сервисной учётки)
             using (PrincipalContext authContext = new(ContextType.Domain, Name))
             {
                 if (!authContext.ValidateCredentials(normalizedUser, password, ContextOptions.Negotiate))
                 {
-                    Log.Warning("Неверные учётные данные. Domain={Domain}, Username={Username}", Name, normalizedUser); 
+                    Log.Warning(
+                        "Неверные учётные данные. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                        ClassName, method, Name, normalizedUser);
                     return false;
                 }
             }
@@ -211,14 +209,18 @@ internal class Domain
             // Без проверки GUID — достаточно валидных учётных данных
             if (!guid)
             {
-                Log.Information("Учётные данные подтверждены (без проверки GUID). Domain={Domain}, Username={Username}",Name, normalizedUser);
+                Log.Information(
+                    "Учётные данные подтверждены (без проверки GUID). Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                    ClassName, method, Name, normalizedUser);
                 return true;
             }
 
             // GUID системы должен быть задан
             if (string.IsNullOrWhiteSpace(Service.Data.GUID))
             {
-                Log.Error("GUID системы не задан. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",ClassName, method, Name, normalizedUser);
+                Log.Error(
+                    "GUID системы не задан. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                    ClassName, method, Name, normalizedUser);
                 return false;
             }
 
@@ -228,20 +230,24 @@ internal class Domain
             int atIndex = normalizedUser.IndexOf('@');
             string samAccountName = (atIndex > 0) ? normalizedUser[..atIndex] : normalizedUser;
 
-            using UserPrincipal? user = 
+            using UserPrincipal? user =
                 UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, samAccountName) ??
                 UserPrincipal.FindByIdentity(context, IdentityType.UserPrincipalName, normalizedUser);
 
             if (user is null)
             {
-                Log.Warning("Пользователь не найден в AD после успешной аутентификации. Domain={Domain}, Username={Username}", Name, normalizedUser);
+                Log.Warning(
+                    "Пользователь не найден в AD после успешной аутентификации. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                    ClassName, method, Name, normalizedUser);
                 return false;
             }
 
             // DirectoryEntry принадлежит UserPrincipal — отдельно не освобождаем
             if (user.GetUnderlyingObject() is not DirectoryEntry entry)
             {
-                Log.Warning("Не удалось получить DirectoryEntry для пользователя. Domain={Domain}, Username={Username}", Name, normalizedUser);
+                Log.Warning(
+                    "Не удалось получить DirectoryEntry для пользователя. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                    ClassName, method, Name, normalizedUser);
                 return false;
             }
 
@@ -253,25 +259,34 @@ internal class Domain
 
             if (allowed)
             {
-                Log.Information("Учётные данные и GUID подтверждены. Domain={Domain}, Username={Username}", Name, normalizedUser);
+                Log.Information(
+                    "Учётные данные и GUID подтверждены. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                    ClassName, method, Name, normalizedUser);
             }
             else
             {
-                Log.Warning("Пользователь не разрешён для WebShelf (GUID не найден в info). Domain={Domain}, Username={Username}", Name, normalizedUser);
+                Log.Warning(
+                    "Пользователь не разрешён для WebShelf (GUID не найден в info). Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                    ClassName, method, Name, normalizedUser);
             }
 
             return allowed;
         }
         catch (PrincipalServerDownException ex)
         {
-            Log.Error(ex,"Контроллер домена недоступен при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}", ClassName, method, Name, normalizedUser);
+            Log.Error(ex,
+                "Контроллер домена недоступен при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                ClassName, method, Name, normalizedUser);
 
-            throw new InvalidOperationException("Не удалось подключиться к Active Directory.", new InvalidOperationException($"Сервер: {Name}", ex));
+            throw new InvalidOperationException(
+                "Не удалось подключиться к Active Directory.",
+                new InvalidOperationException($"Сервер: {Name}", ex));
         }
         catch (Exception ex)
         {
-            // Остальные исключения считаем неверными учётными данными / временной ошибкой
-            Log.Error(ex,"Ошибка при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}", ClassName, method, Name, normalizedUser);
+            Log.Error(ex,
+                "Ошибка при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                ClassName, method, Name, normalizedUser);
             return false;
         }
     }
@@ -289,39 +304,9 @@ internal class Domain
     /// <summary>
     /// Приводит имя пользователя к формату <c>username@domainname</c>.
     /// </summary>
-    /// <remarks>
-    /// Домен берётся из <c>Data.Domain.Name</c> или из параметра <c>domainName</c> если указан явно. Поддерживаются три входных формата:
-    /// <list type="bullet">
-    ///   <item><description>короткое имя без домена (<c>ivanov</c>) — домен добавляется;</description></item>
-    ///   <item><description>UPN (<c>ivanov@contoso.com</c>) — возвращается без изменений,
-    ///     если домен совпадает с <c>Data.Domain.Name</c> (без учёта регистра);</description></item>
-    ///   <item><description>down-level logon (<c>CONTOSO\ivanov</c>) — левая часть отбрасывается,
-    ///     к правой добавляется домен.</description></item>
-    /// </list>
-    /// Если имя пустое, домен не задан, формат некорректен или домен во входном UPN
-    /// не совпадает с <c>Data.Domain.Name</c>, метод записывает предупреждение в лог
-    /// и возвращает <see langword="null"/>. Исключения не выбрасываются —
-    /// любая ошибка логируется и приводит к возврату <see langword="null"/>.
-    /// </remarks>
-    /// <param name="userName">Имя пользователя, введённое в форме входа.
-    /// Может содержать ведущие и хвостовые пробелы — они отбрасываются.</param>
-    /// <returns>
-    /// Имя пользователя в формате <c>username@domainname</c> либо
-    /// <see langword="null"/>, если нормализация невозможна.
-    /// </returns>
-    /// <example>
-    /// <code>
-    /// // Data.Domain.Name == "contoso.com"
-    /// NormalizeUserName("ivanov")              // "ivanov@contoso.com"
-    /// NormalizeUserName("ivanov@contoso.com")  // "ivanov@contoso.com"
-    /// NormalizeUserName(@"CONTOSO\ivanov")     // "ivanov@contoso.com"
-    /// NormalizeUserName("ivanov@other.com")    // null
-    /// NormalizeUserName("")                    // null
-    /// </code>
-    /// </example>
     public static string? NormalizeUserName(string userName, string? domainName = null)
     {
-        const string methodName = nameof(NormalizeUserName);
+        const string method = nameof(NormalizeUserName);
 
         try
         {
@@ -346,10 +331,10 @@ internal class Domain
             // Формат UPN: user@domain
             if (user.Contains('@'))
             {
-                if (user.IndexOf('@') == user.LastIndexOf('@') &&                           // ровно один '@'
-                    user.EndsWith($"@{domain}", StringComparison.OrdinalIgnoreCase) &&      // заканчивается на @{domain}
-                    user.IndexOf('@') > 0 &&                                                // не начинается с '@'
-                    user.IndexOf('@') < user.Length - 1)                                    // не заканчивается '@'
+                if (user.IndexOf('@') == user.LastIndexOf('@') &&
+                    user.EndsWith($"@{domain}", StringComparison.OrdinalIgnoreCase) &&
+                    user.IndexOf('@') > 0 &&
+                    user.IndexOf('@') < user.Length - 1)
                 {
                     return user;
                 }
@@ -376,10 +361,15 @@ internal class Domain
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Класс: {Class}, Метод: {Method}. Ошибка при нормализации имени пользователя: {UserName}.", typeof(Domain).FullName, methodName, userName);
+            Log.Error(ex,
+                "Ошибка при нормализации имени пользователя. Class={Class}, Method={Method}, UserName={UserName}",
+                ClassName, method, userName);
             return null;
         }
 
-        void WarnInvalid(string reason) => Log.Warning("Класс: {Class}, Метод: {Method}. {Reason} Имя: {UserName}.", typeof(Domain).FullName, methodName, reason, userName);
+        void WarnInvalid(string reason) =>
+            Log.Warning(
+                "{Reason} Class={Class}, Method={Method}, UserName={UserName}",
+                reason, ClassName, method, userName);
     }
 }
