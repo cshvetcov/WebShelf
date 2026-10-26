@@ -192,22 +192,18 @@ internal class Domain
             return false;
         }
 
-        string normalizedUser = username.Trim();
+        string normalizedUser = (NormalizeUserName(username) ?? string.Empty).Trim();
 
         try
         {
-            Log.Debug(
-                "Начало проверки учётных данных. Domain={Domain}, Username={Username}, CheckGuid={CheckGuid}",
-                Name, normalizedUser, guid);
+            Log.Debug("Начало проверки учётных данных. Domain={Domain}, Username={Username}, CheckGuid={CheckGuid}", Name, normalizedUser, guid);
 
             // Проверка логина/пароля (контекст без сервисной учётки)
             using (PrincipalContext authContext = new(ContextType.Domain, Name))
             {
                 if (!authContext.ValidateCredentials(normalizedUser, password, ContextOptions.Negotiate))
                 {
-                    Log.Warning(
-                        "Неверные учётные данные. Domain={Domain}, Username={Username}",
-                        Name, normalizedUser);
+                    Log.Warning("Неверные учётные данные. Domain={Domain}, Username={Username}", Name, normalizedUser); 
                     return false;
                 }
             }
@@ -215,40 +211,31 @@ internal class Domain
             // Без проверки GUID — достаточно валидных учётных данных
             if (!guid)
             {
-                Log.Information(
-                    "Учётные данные подтверждены (без проверки GUID). Domain={Domain}, Username={Username}",
-                    Name, normalizedUser);
+                Log.Information("Учётные данные подтверждены (без проверки GUID). Domain={Domain}, Username={Username}",Name, normalizedUser);
                 return true;
             }
 
             // GUID системы должен быть задан
             if (string.IsNullOrWhiteSpace(Service.Data.GUID))
             {
-                Log.Error(
-                    "GUID системы не задан. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                    ClassName, method, Name, normalizedUser);
+                Log.Error("GUID системы не задан. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",ClassName, method, Name, normalizedUser);
                 return false;
             }
 
             // Для чтения атрибута info используем сервисную учётную запись
             using PrincipalContext context = new(ContextType.Domain, Name, User, _password);
-            using UserPrincipal? user = UserPrincipal.FindByIdentity(
-                context, IdentityType.SamAccountName, normalizedUser);
+            using UserPrincipal? user = UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, normalizedUser);
 
             if (user is null)
             {
-                Log.Warning(
-                    "Пользователь не найден в AD после успешной аутентификации. Domain={Domain}, Username={Username}",
-                    Name, normalizedUser);
+                Log.Warning("Пользователь не найден в AD после успешной аутентификации. Domain={Domain}, Username={Username}", Name, normalizedUser);
                 return false;
             }
 
             // DirectoryEntry принадлежит UserPrincipal — отдельно не освобождаем
             if (user.GetUnderlyingObject() is not DirectoryEntry entry)
             {
-                Log.Warning(
-                    "Не удалось получить DirectoryEntry для пользователя. Domain={Domain}, Username={Username}",
-                    Name, normalizedUser);
+                Log.Warning("Не удалось получить DirectoryEntry для пользователя. Domain={Domain}, Username={Username}", Name, normalizedUser);
                 return false;
             }
 
@@ -260,35 +247,25 @@ internal class Domain
 
             if (allowed)
             {
-                Log.Information(
-                    "Учётные данные и GUID подтверждены. Domain={Domain}, Username={Username}",
-                    Name, normalizedUser);
+                Log.Information("Учётные данные и GUID подтверждены. Domain={Domain}, Username={Username}", Name, normalizedUser);
             }
             else
             {
-                Log.Warning(
-                    "Пользователь не разрешён для WebShelf (GUID не найден в info). Domain={Domain}, Username={Username}",
-                    Name, normalizedUser);
+                Log.Warning("Пользователь не разрешён для WebShelf (GUID не найден в info). Domain={Domain}, Username={Username}", Name, normalizedUser);
             }
 
             return allowed;
         }
         catch (PrincipalServerDownException ex)
         {
-            Log.Error(ex,
-                "Контроллер домена недоступен при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                ClassName, method, Name, normalizedUser);
+            Log.Error(ex,"Контроллер домена недоступен при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}", ClassName, method, Name, normalizedUser);
 
-            throw new InvalidOperationException(
-                "Не удалось подключиться к Active Directory.",
-                new InvalidOperationException($"Сервер: {Name}", ex));
+            throw new InvalidOperationException("Не удалось подключиться к Active Directory.", new InvalidOperationException($"Сервер: {Name}", ex));
         }
         catch (Exception ex)
         {
             // Остальные исключения считаем неверными учётными данными / временной ошибкой
-            Log.Error(ex,
-                "Ошибка при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                ClassName, method, Name, normalizedUser);
+            Log.Error(ex,"Ошибка при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}", ClassName, method, Name, normalizedUser);
             return false;
         }
     }
