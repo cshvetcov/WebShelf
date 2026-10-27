@@ -1,7 +1,9 @@
 ﻿@page "/"
 @rendermode InteractiveServer
+@implements IDisposable
 
 @using System.DirectoryServices.AccountManagement
+@using Microsoft.AspNetCore.Antiforgery
 @using Microsoft.AspNetCore.Components.Authorization
 @using WebShelf.Classes.Service
 @using WebShelf.Components.Shared
@@ -9,6 +11,9 @@
 @inject NavigationManager Navigation
 @inject AuthenticationStateProvider AuthStateProvider
 @inject ILogger<Home> Logger
+@inject IAntiforgery Antiforgery
+@inject IHttpContextAccessor HttpContextAccessor
+@inject LoginGuard LoginGuard
 
 <PageTitle>Вход в систему WebShelf</PageTitle>
 
@@ -59,16 +64,20 @@ else
                MaxWidth="420px">
 
         <form method="post" action="/account/login" autocomplete="on">
+            @* CSRF-токен *@
+            <input type="hidden" name="__RequestVerificationToken" value="@antiforgeryToken" />
+
             <div class="ws-form-group">
                 <label for="username">Имя пользователя (AD)</label>
                 <div class="ws-input-wrapper">
                     <input type="text"
                            id="username"
                            name="username"
-                           placeholder="DOMAIN\user или user@domain"
+                           placeholder="Login"
                            required
                            autofocus
-                           autocomplete="username" />
+                           autocomplete="username"
+                           disabled="@isLocked" />
                 </div>
             </div>
 
@@ -78,26 +87,41 @@ else
                     <input type="password"
                            id="password"
                            name="password"
-                           placeholder="Введите пароль"
+                           placeholder="Password"
                            required
-                           autocomplete="current-password" />
+                           autocomplete="current-password"
+                           disabled="@isLocked" />
                     <button type="button"
                             class="ws-toggle-password ws-hidden-eye"
                             aria-label="Показать пароль"
-                            title="Показать / скрыть пароль">
+                            title="Показать / скрыть пароль"
+                            disabled="@isLocked">
                         👁
                     </button>
                 </div>
             </div>
 
             <div class="ws-form-check">
-                <input type="checkbox" name="rememberMe" value="true" id="rememberMe" />
+                <input type="checkbox"
+                       name="rememberMe"
+                       value="true"
+                       id="rememberMe"
+                       disabled="@isLocked" />
                 <label for="rememberMe">Запомнить меня</label>
             </div>
 
-            <button type="submit" class="ws-btn-primary">Войти</button>
+            <button type="submit" class="ws-btn-primary" disabled="@isLocked">
+                @(isLocked ? $"Вход временно заблокирован" : "Войти")
+            </button>
 
-            @if (!string.IsNullOrEmpty(errorMessage))
+            @if (isLocked)
+            {
+                <div class="ws-message ws-message-lockout" role="alert">
+                    Слишком много неудачных попыток входа.
+                    Повторите через <strong>@lockoutSeconds</strong> с.
+                </div>
+            }
+            else if (!string.IsNullOrEmpty(errorMessage))
             {
                 <div class="ws-message ws-message-error" role="alert">@errorMessage</div>
             }
@@ -107,6 +131,7 @@ else
 
 @code {
     private const string ClassName = "WebShelf.Components.Pages.Home";
+
     /// <summary>
     /// Краткая информация о пользователе AD для таблицы.
     /// </summary>
@@ -116,19 +141,56 @@ else
     private string errorMessage = string.Empty;
     private bool isAuthenticated;
     private string currentUser = string.Empty;
+    private string antiforgeryToken = string.Empty;
+
+    private bool isLocked;
+    private int lockoutSeconds;
+    private System.Threading.Timer? _lockoutTimer;
 
     /// <summary>
-    /// Инициализация: чтение ошибки из query-string и проверка аутентификации.
+    /// Инициализация: CSRF-токен, ошибка из query-string, блокировка, проверка аутентификации.
     /// </summary>
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
-            if (Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query).TryGetValue("error", out var error))
+            // Antiforgery-токен для HTML-формы
+            HttpContext? http = HttpContextAccessor.HttpContext;
+            if (http is not null)
             {
-                errorMessage = error == "invalid" ? "Неверный логин или пароль." :
-                               error == "server" ? "Ошибка сервера при входе." : "Ошибка входа.";
+                AntiforgeryTokenSet tokens = Antiforgery.GetAndStoreTokens(http);
+                antiforgeryToken = tokens.RequestToken ?? string.Empty;
+            }
+
+            var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+
+            if (query.TryGetValue("error", out var error))
+            {
+                if (error == "locked")
+                {
+                    int retry = 30;
+                    if (query.TryGetValue("retry", out var retryVal) &&
+                        int.TryParse(retryVal, out int parsed) &&
+                        parsed > 0)
+                    {
+                        retry = parsed;
+                    }
+                    StartLockout(retry);
+                }
+                else
+                {
+                    errorMessage = error == "invalid" ? "Неверный логин или пароль." :
+                                   error == "server" ? "Ошибка сервера при входе." : "Ошибка входа.";
+                }
+            }
+
+            // На случай обновления страницы во время блокировки — сверяемся с LoginGuard
+            if (!isLocked)
+            {
+                string clientIp = http?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                if (LoginGuard.IsLocked(clientIp, null, out int remain) && remain > 0)
+                    StartLockout(remain);
             }
 
             await CheckAuth();
@@ -139,6 +201,40 @@ else
         {
             Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnInitializedAsync));
             errorMessage = "Ошибка инициализации страницы.";
+        }
+    }
+
+    /// <summary>
+    /// Запускает обратный отсчёт блокировки на форме.
+    /// </summary>
+    private void StartLockout(int seconds)
+    {
+        try
+        {
+            isLocked = true;
+            lockoutSeconds = Math.Max(1, seconds);
+            errorMessage = string.Empty;
+
+            _lockoutTimer?.Dispose();
+            _lockoutTimer = new System.Threading.Timer(_ =>
+            {
+                _ = InvokeAsync(() =>
+                {
+                    lockoutSeconds--;
+                    if (lockoutSeconds <= 0)
+                    {
+                        isLocked = false;
+                        lockoutSeconds = 0;
+                        _lockoutTimer?.Dispose();
+                        _lockoutTimer = null;
+                    }
+                    StateHasChanged();
+                });
+            }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(StartLockout));
         }
     }
 
@@ -200,5 +296,14 @@ else
         {
             Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(Logout));
         }
+    }
+
+    /// <summary>
+    /// Освобождает таймер блокировки.
+    /// </summary>
+    public void Dispose()
+    {
+        _lockoutTimer?.Dispose();
+        _lockoutTimer = null;
     }
 }

@@ -282,6 +282,18 @@ body.ws-window-page {
     color: #A0E8C0;
 }
 
+/* Сообщение о временной блокировке входа (brute-force) */
+.ws-message-lockout {
+    background: rgba(180, 120, 20, 0.28);
+    border: 1px solid rgba(220, 160, 40, 0.45);
+    color: #FFDFA0;
+}
+
+.ws-message-lockout strong {
+    color: #FFE8B0;
+    font-variant-numeric: tabular-nums;
+}
+
 /* Чекбокс «Запомнить» */
 .ws-form-check {
     display: flex;
@@ -315,3 +327,5 @@ body.ws-window-page {
         max-width: 420px;
     }
 }
+
+

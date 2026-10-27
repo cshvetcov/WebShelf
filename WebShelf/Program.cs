@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Antiforgery;
 using System.Security.Claims;
 using Serilog.Events;
 using WebShelf.Classes.Service;
@@ -35,19 +36,19 @@ try
     WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
     builder.Host.UseSerilog((context, services, configuration) => configuration
-    .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
-    .Enrich.FromLogContext()
-    .Enrich.WithEnvironmentName()
-    .Enrich.WithThreadId()
-    .WriteTo.Debug()
-    .WriteTo.File(
-        path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
-        rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 30,
-        shared: true,
-        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}"));
+        .MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .Enrich.WithEnvironmentName()
+        .Enrich.WithThreadId()
+        .WriteTo.Debug()
+        .WriteTo.File(
+            path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 30,
+            shared: true,
+            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}"));
 
     // Схема и порт только из Server.conf (независимо от launchSettings.json и профилей http/https)
     string listenUrl = $"{Data.Scheme}://0.0.0.0:{Data.Port}";
@@ -57,6 +58,8 @@ try
         listenUrl, "WebShelf.Program", "Main");
 
     #region Аутентификация через куки
+    bool preferSecure = string.Equals(Data.Scheme, "https", StringComparison.OrdinalIgnoreCase);
+
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
         .AddCookie(options =>
         {
@@ -66,13 +69,30 @@ try
             options.SlidingExpiration = true;
             options.Cookie.Name = "WebShelf.Auth";
             options.Cookie.HttpOnly = true;
-            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            options.Cookie.SecurePolicy = preferSecure
+                ? CookieSecurePolicy.Always
+                : CookieSecurePolicy.SameAsRequest;
+            options.Cookie.SameSite = SameSiteMode.Lax;
         });
 
     builder.Services.AddAuthorization();
     builder.Services.AddCascadingAuthenticationState();
     builder.Services.AddHttpContextAccessor();
     #endregion
+
+    // Antiforgery (CSRF) + защита от перебора паролей
+    builder.Services.AddAntiforgery(options =>
+    {
+        options.HeaderName = "RequestVerificationToken";
+        options.Cookie.Name = "WebShelf.Antiforgery";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SecurePolicy = preferSecure
+            ? CookieSecurePolicy.Always
+            : CookieSecurePolicy.SameAsRequest;
+        options.Cookie.SameSite = SameSiteMode.Strict;
+    });
+
+    builder.Services.AddSingleton<LoginGuard>();
 
     builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
@@ -95,7 +115,7 @@ try
     app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 
     // Редирект на HTTPS только если в Server.conf указана схема https
-    if (string.Equals(Data.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+    if (preferSecure)
     {
         app.UseHttpsRedirection();
     }
@@ -118,23 +138,68 @@ finally
 }
 
 /// <summary>
-/// Обработчик POST /account/login — проверка учётных данных AD и выдача cookie.
+/// Обработчик POST /account/login — CSRF-проверка, защита от перебора, проверка AD и выдача cookie.
 /// </summary>
-static async Task<IResult> LoginAsync(HttpContext context, IConfiguration config)
+static async Task<IResult> LoginAsync(
+    HttpContext context,
+    IAntiforgery antiforgery,
+    LoginGuard loginGuard)
 {
+    const string className = "WebShelf.Program";
+    const string method = nameof(LoginAsync);
+
     try
     {
+        // --- CSRF ---
+        try
+        {
+            await antiforgery.ValidateRequestAsync(context);
+        }
+        catch (AntiforgeryValidationException ex)
+        {
+            Log.Warning(ex, "Неверный antiforgery-токен при входе. Class={Class}, Method={Method}", className, method);
+            return Results.Redirect("/?error=invalid");
+        }
+
         var form = await context.Request.ReadFormAsync();
         string? username = form["username"];
         string? password = form["password"];
         bool rememberMe = form["rememberMe"] == "true";
 
+        string clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        string userKey = string.IsNullOrWhiteSpace(username) ? string.Empty : username.Trim();
+
+        // --- Brute-force: уже заблокирован? ---
+        if (loginGuard.IsLocked(clientIp, userKey, out int remainBefore))
+        {
+            Log.Warning(
+                "Попытка входа во время блокировки. Ip={Ip}, User={User}, RemainSec={Sec}. Class={Class}, Method={Method}",
+                clientIp, userKey, remainBefore, className, method);
+            return Results.Redirect($"/?error=locked&retry={remainBefore}");
+        }
+
         if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null)
+        {
+            int lockedSec = loginGuard.RecordFailure(clientIp, userKey);
+            if (lockedSec > 0)
+                return Results.Redirect($"/?error=locked&retry={lockedSec}");
             return Results.Redirect("/?error=invalid");
+        }
 
         bool isValid = Data.Domain.ValidateAdCredentials(username.Trim(), password);
         if (!isValid)
+        {
+            int lockedSec = loginGuard.RecordFailure(clientIp, userKey);
+            Log.Warning(
+                "Неудачная попытка входа. Ip={Ip}, User={User}, LockedSec={Sec}. Class={Class}, Method={Method}",
+                clientIp, userKey, lockedSec, className, method);
+
+            if (lockedSec > 0)
+                return Results.Redirect($"/?error=locked&retry={lockedSec}");
             return Results.Redirect("/?error=invalid");
+        }
+
+        loginGuard.RecordSuccess(clientIp, userKey);
 
         var claims = new List<Claim>
         {
@@ -162,7 +227,7 @@ static async Task<IResult> LoginAsync(HttpContext context, IConfiguration config
     }
     catch (Exception ex)
     {
-        Log.Error(ex, "Исключение в {Class}.{Method}", "WebShelf.Program", nameof(LoginAsync));
+        Log.Error(ex, "Исключение в {Class}.{Method}", className, method);
         return Results.Redirect("/?error=server");
     }
 }
