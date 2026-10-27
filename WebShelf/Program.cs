@@ -27,6 +27,12 @@ try
 {
     Log.Information("WebShelf запускается...");
 
+    if (EncryptionService.EnsureMasterKey() == null)
+    {
+        Log.Fatal("Не удалось создать или загрузить мастер-ключ. Приложение останавливается. Class={Class}, Method={Method}", "WebShelf.Program", "Main");
+        Environment.Exit(1);
+    }
+
     if (!Data.ReadConfig())
     {
         Log.Fatal("Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}", "WebShelf.Program", "Main");
