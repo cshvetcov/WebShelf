@@ -1,27 +1,21 @@
 ﻿@page "/"
 @rendermode InteractiveServer
-@implements IDisposable
 
-@using System.DirectoryServices.AccountManagement
-@using Microsoft.AspNetCore.Antiforgery
 @using Microsoft.AspNetCore.Components.Authorization
 @using WebShelf.Classes.Service
-@using WebShelf.Components.Shared
 
 @inject NavigationManager Navigation
 @inject AuthenticationStateProvider AuthStateProvider
 @inject ILogger<Home> Logger
-@inject IAntiforgery Antiforgery
-@inject IHttpContextAccessor HttpContextAccessor
-@inject LoginGuard LoginGuard
 
-<PageTitle>Вход в систему WebShelf</PageTitle>
+<PageTitle>WebShelf</PageTitle>
 
 @if (isAuthenticated)
 {
     <div class="alert alert-success d-flex justify-content-between align-items-center">
         <span>Вы вошли как <strong>@currentUser</strong></span>
-        <button class="btn btn-outline-danger btn-sm" @onclick="Logout">Выйти</button>
+        @* Полный переход (без enhanced navigation), браузер следует за 302 на /entry *@
+        <a class="btn btn-outline-danger btn-sm" href="/account/logout" data-enhance-nav="false">Выйти</a>
     </div>
 
     <h1>Пользователи системы WebShelf</h1>
@@ -53,81 +47,6 @@
         </table>
     }
 }
-else
-{
-    @* Окно входа: оболочка AppWindow + форма POST на /account/login *@
-    <AppWindow Title="Вход в систему — WebShelf"
-               IconText="WS"
-               CanClose="false"
-               CloseBubbleText="Это окно не может быть закрыто"
-               ApplyPageBackground="true"
-               MaxWidth="420px">
-
-        <form method="post" action="/account/login" autocomplete="on">
-            @* CSRF-токен *@
-            <input type="hidden" name="__RequestVerificationToken" value="@antiforgeryToken" />
-
-            <div class="ws-form-group">
-                <label for="username">Имя пользователя (AD)</label>
-                <div class="ws-input-wrapper">
-                    <input type="text"
-                           id="username"
-                           name="username"
-                           placeholder="Login"
-                           required
-                           autofocus
-                           autocomplete="username"
-                           disabled="@isLocked" />
-                </div>
-            </div>
-
-            <div class="ws-form-group">
-                <label for="password">Пароль</label>
-                <div class="ws-input-wrapper">
-                    <input type="password"
-                           id="password"
-                           name="password"
-                           placeholder="Password"
-                           required
-                           autocomplete="current-password"
-                           disabled="@isLocked" />
-                    <button type="button"
-                            class="ws-toggle-password ws-hidden-eye"
-                            aria-label="Показать пароль"
-                            title="Показать / скрыть пароль"
-                            disabled="@isLocked">
-                        👁
-                    </button>
-                </div>
-            </div>
-
-            <div class="ws-form-check">
-                <input type="checkbox"
-                       name="rememberMe"
-                       value="true"
-                       id="rememberMe"
-                       disabled="@isLocked" />
-                <label for="rememberMe">Запомнить меня</label>
-            </div>
-
-            <button type="submit" class="ws-btn-primary" disabled="@isLocked">
-                @(isLocked ? $"Вход временно заблокирован" : "Войти")
-            </button>
-
-            @if (isLocked)
-            {
-                <div class="ws-message ws-message-lockout" role="alert">
-                    Слишком много неудачных попыток входа.
-                    Повторите через <strong>@lockoutSeconds</strong> с.
-                </div>
-            }
-            else if (!string.IsNullOrEmpty(errorMessage))
-            {
-                <div class="ws-message ws-message-error" role="alert">@errorMessage</div>
-            }
-        </form>
-    </AppWindow>
-}
 
 @code {
     private const string ClassName = "WebShelf.Components.Pages.Home";
@@ -138,103 +57,30 @@ else
     private sealed record UserInfo(string SamAccountName, string DisplayName, string Email);
 
     private List<UserInfo> users = [];
-    private string errorMessage = string.Empty;
     private bool isAuthenticated;
     private string currentUser = string.Empty;
-    private string antiforgeryToken = string.Empty;
-
-    private bool isLocked;
-    private int lockoutSeconds;
-    private System.Threading.Timer? _lockoutTimer;
 
     /// <summary>
-    /// Инициализация: CSRF-токен, ошибка из query-string, блокировка, проверка аутентификации.
+    /// Если пользователь не авторизован — безусловный редирект на Entry.
+    /// Иначе загружает список пользователей домена.
     /// </summary>
     protected override async Task OnInitializedAsync()
     {
         try
         {
-            // Antiforgery-токен для HTML-формы
-            HttpContext? http = HttpContextAccessor.HttpContext;
-            if (http is not null)
-            {
-                AntiforgeryTokenSet tokens = Antiforgery.GetAndStoreTokens(http);
-                antiforgeryToken = tokens.RequestToken ?? string.Empty;
-            }
-
-            var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
-            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
-
-            if (query.TryGetValue("error", out var error))
-            {
-                if (error == "locked")
-                {
-                    int retry = 30;
-                    if (query.TryGetValue("retry", out var retryVal) &&
-                        int.TryParse(retryVal, out int parsed) &&
-                        parsed > 0)
-                    {
-                        retry = parsed;
-                    }
-                    StartLockout(retry);
-                }
-                else
-                {
-                    errorMessage = error == "invalid" ? "Неверный логин или пароль." :
-                                   error == "server" ? "Ошибка сервера при входе." : "Ошибка входа.";
-                }
-            }
-
-            // На случай обновления страницы во время блокировки — сверяемся с LoginGuard
-            if (!isLocked)
-            {
-                string clientIp = http?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-                if (LoginGuard.IsLocked(clientIp, null, out int remain) && remain > 0)
-                    StartLockout(remain);
-            }
-
             await CheckAuth();
-            if (isAuthenticated)
-                LoadUsers();
+
+            if (!isAuthenticated)
+            {
+                Navigation.NavigateTo("/entry", forceLoad: true);
+                return;
+            }
+
+            LoadUsers();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnInitializedAsync));
-            errorMessage = "Ошибка инициализации страницы.";
-        }
-    }
-
-    /// <summary>
-    /// Запускает обратный отсчёт блокировки на форме.
-    /// </summary>
-    private void StartLockout(int seconds)
-    {
-        try
-        {
-            isLocked = true;
-            lockoutSeconds = Math.Max(1, seconds);
-            errorMessage = string.Empty;
-
-            _lockoutTimer?.Dispose();
-            _lockoutTimer = new System.Threading.Timer(_ =>
-            {
-                _ = InvokeAsync(() =>
-                {
-                    lockoutSeconds--;
-                    if (lockoutSeconds <= 0)
-                    {
-                        isLocked = false;
-                        lockoutSeconds = 0;
-                        _lockoutTimer?.Dispose();
-                        _lockoutTimer = null;
-                    }
-                    StateHasChanged();
-                });
-            }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(StartLockout));
         }
     }
 
@@ -283,27 +129,4 @@ else
         }
     }
 
-    /// <summary>
-    /// Выход из системы — переход на /account/logout с полной перезагрузкой.
-    /// </summary>
-    private void Logout()
-    {
-        try
-        {
-            Navigation.NavigateTo("/account/logout", forceLoad: true);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(Logout));
-        }
-    }
-
-    /// <summary>
-    /// Освобождает таймер блокировки.
-    /// </summary>
-    public void Dispose()
-    {
-        _lockoutTimer?.Dispose();
-        _lockoutTimer = null;
-    }
 }

@@ -20,7 +20,7 @@
 
   <ItemGroup>
     <None Update="Server.conf">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Server.conf.template">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>

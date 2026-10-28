@@ -107,8 +107,8 @@ try
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
         .AddCookie(options =>
         {
-            options.LoginPath = "/";
-            options.AccessDeniedPath = "/";
+            options.LoginPath = "/entry";
+            options.AccessDeniedPath = "/entry";
             options.ExpireTimeSpan = TimeSpan.FromHours(8);
             options.SlidingExpiration = true;
             options.Cookie.Name = "WebShelf.Auth";
@@ -144,9 +144,6 @@ try
 
     app.UseSerilogRequestLogging();
 
-    app.MapPost("/account/login", LoginAsync);
-    app.MapGet("/account/logout", LogoutAsync);
-
     app.UseAuthentication();
     app.UseAuthorization();
 
@@ -165,6 +162,9 @@ try
     }
 
     app.UseAntiforgery();
+
+    app.MapPost("/account/login", LoginAsync);
+    app.MapGet("/account/logout", LogoutAsync);
 
     app.MapStaticAssets();
     app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
@@ -202,7 +202,7 @@ static async Task<IResult> LoginAsync(
         catch (AntiforgeryValidationException ex)
         {
             Log.Warning(ex, "Неверный antiforgery-токен при входе. Class={Class}, Method={Method}", className, method);
-            return Results.Redirect("/?error=invalid");
+            return Results.Redirect("/entry?error=invalid");
         }
 
         var form = await context.Request.ReadFormAsync();
@@ -219,15 +219,15 @@ static async Task<IResult> LoginAsync(
             Log.Warning(
                 "Попытка входа во время блокировки. Ip={Ip}, User={User}, RemainSec={Sec}. Class={Class}, Method={Method}",
                 clientIp, "UserAccount", remainBefore, className, method);
-            return Results.Redirect($"/?error=locked&retry={remainBefore}");
+            return Results.Redirect($"/entry?error=locked&retry={remainBefore}");
         }
 
         if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null)
         {
             int lockedSec = loginGuard.RecordFailure(clientIp, userKey);
             if (lockedSec > 0)
-                return Results.Redirect($"/?error=locked&retry={lockedSec}");
-            return Results.Redirect("/?error=invalid");
+                return Results.Redirect($"/entry?error=locked&retry={lockedSec}");
+            return Results.Redirect("/entry?error=invalid");
         }
 
         bool isValid = Data.Domain.ValidateAdCredentials(username.Trim(), password);
@@ -239,8 +239,8 @@ static async Task<IResult> LoginAsync(
                 clientIp, "UserAccount", lockedSec, className, method);
 
             if (lockedSec > 0)
-                return Results.Redirect($"/?error=locked&retry={lockedSec}");
-            return Results.Redirect("/?error=invalid");
+                return Results.Redirect($"/entry?error=locked&retry={lockedSec}");
+            return Results.Redirect("/entry?error=invalid");
         }
 
         loginGuard.RecordSuccess(clientIp, userKey);
@@ -272,23 +272,43 @@ static async Task<IResult> LoginAsync(
     catch (Exception ex)
     {
         Log.Error(ex, "Исключение в {Class}.{Method}", className, method);
-        return Results.Redirect("/?error=server");
+        return Results.Redirect("/entry?error=server");
     }
 }
 
 /// <summary>
-/// Обработчик GET /account/logout — выход и очистка cookie.
+/// Обработчик GET /account/logout — выход, очистка cookie и переход на страницу входа.
+/// Использует Response.Redirect (302), а не IResult, чтобы редирект гарантированно уходил в браузер.
 /// </summary>
-static async Task<IResult> LogoutAsync(HttpContext context)
+static async Task LogoutAsync(HttpContext context)
 {
+    const string className = "WebShelf.Program";
+    const string method = nameof(LogoutAsync);
+
     try
     {
         await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-        return Results.Redirect("/");
+
+        // Явно гасим auth-cookie (Path/SameSite как при выдаче)
+        context.Response.Cookies.Delete(
+            "WebShelf.Auth",
+            new CookieOptions
+            {
+                Path = "/",
+                HttpOnly = true,
+                Secure = context.Request.IsHttps,
+                SameSite = SameSiteMode.Lax
+            });
+
+        context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        context.Response.Headers.Pragma = "no-cache";
+
+        Log.Information("Выход выполнен, редирект на /entry. Class={Class}, Method={Method}", className, method);
+        context.Response.Redirect("/entry", permanent: false);
     }
     catch (Exception ex)
     {
-        Log.Error(ex, "Исключение в {Class}.{Method}", "WebShelf.Program", nameof(LogoutAsync));
-        return Results.Redirect("/");
+        Log.Error(ex, "Исключение в {Class}.{Method}", className, method);
+        context.Response.Redirect("/entry", permanent: false);
     }
 }
