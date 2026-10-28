@@ -90,11 +90,35 @@
     }
 
     /**
-     * Полный выход: браузерный переход на /account/logout.
-     * Не использует Blazor navigation — браузер сам следует 302 на /entry.
+     * Выход из системы.
+     * 1) fetch /account/logout с redirect:manual — сервер сбрасывает cookie (Set-Cookie),
+     *    браузер НЕ следует за 302 (иначе Blazor/circuit ломает документ).
+     * 2) location.replace('/entry') — гарантированный переход на окно входа.
      */
     function logout() {
-        window.location.assign("/account/logout");
+        var done = false;
+        function goEntry() {
+            if (done) {
+                return;
+            }
+            done = true;
+            window.location.replace("/entry");
+        }
+
+        try {
+            fetch("/account/logout", {
+                method: "GET",
+                credentials: "same-origin",
+                redirect: "manual",
+                cache: "no-store",
+                headers: { "X-Requested-With": "XMLHttpRequest" }
+            }).then(goEntry, goEntry);
+        } catch (e) {
+            goEntry();
+        }
+
+        // Страховка, если fetch завис
+        setTimeout(goEntry, 2000);
     }
 
     window.WebShelfRibbon = {

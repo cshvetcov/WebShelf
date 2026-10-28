@@ -63,8 +63,8 @@ try
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
         .AddCookie(options =>
         {
-            options.LoginPath = "/";
-            options.AccessDeniedPath = "/";
+            options.LoginPath = "/entry";
+            options.AccessDeniedPath = "/entry";
             options.ExpireTimeSpan = TimeSpan.FromHours(8);
             options.SlidingExpiration = true;
             options.Cookie.Name = "WebShelf.Auth";
@@ -100,12 +100,6 @@ try
 
     app.UseSerilogRequestLogging();
 
-    app.MapPost("/account/login", LoginAsync);
-    app.MapGet("/account/logout", LogoutAsync);
-
-    app.UseAuthentication();
-    app.UseAuthorization();
-
     if (!app.Environment.IsDevelopment())
     {
         app.UseExceptionHandler("/Error", createScopeForErrors: true);
@@ -120,9 +114,13 @@ try
         app.UseHttpsRedirection();
     }
 
+    app.UseAuthentication();
+    app.UseAuthorization();
     app.UseAntiforgery();
 
     app.MapStaticAssets();
+    app.MapPost("/account/login", LoginAsync);
+    app.MapGet("/account/logout", LogoutAsync);
     app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
     app.Run();
@@ -237,14 +235,31 @@ static async Task<IResult> LoginAsync(
 /// </summary>
 static async Task<IResult> LogoutAsync(HttpContext context)
 {
+    const string className = "WebShelf.Program";
+    const string method = nameof(LogoutAsync);
+
     try
     {
         await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        Log.Information("Выход выполнен. Class={Class}, Method={Method}", className, method);
+
+        // Fetch (XHR) с redirect:manual — 204, cookie уже сброшен, клиент сам идёт на /entry.
+        // Обычный переход браузера — 302 на /entry.
+        string accept = context.Request.Headers.Accept.ToString();
+        bool isFetch = accept.Contains("application/json", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(context.Request.Headers["X-Requested-With"], "XMLHttpRequest", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(context.Request.Headers["Sec-Fetch-Mode"], "cors", StringComparison.OrdinalIgnoreCase);
+
+        if (isFetch)
+        {
+            return Results.NoContent();
+        }
+
         return Results.Redirect("/entry");
     }
     catch (Exception ex)
     {
-        Log.Error(ex, "Исключение в {Class}.{Method}", "WebShelf.Program", nameof(LogoutAsync));
+        Log.Error(ex, "Исключение в {Class}.{Method}", className, method);
         return Results.Redirect("/entry");
     }
 }
