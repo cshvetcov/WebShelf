@@ -330,19 +330,9 @@ internal static class Data
             // В Domain передаём уже зашифрованные значения
             Domain = new Domain(domainName, encryptedUser, encryptedPass);
 
-            string displayUser;
-            try
-            {
-                displayUser = Domain.GetDecryptedUser();
-            }
-            catch
-            {
-                displayUser = "(encrypted)";
-            }
-
             Log.Information(
                 "Домен инициализирован. Domain={Domain}, User={User}. Class={Class}, Method={Method}",
-                Domain.Name, displayUser, ClassName, method);
+                Domain.Name, "SystemAccount", ClassName, method);
 
             // Проверка доступности AD: валидация сервисной учётки без учёта GUID (открытый пароль)
             bool isAvailable = Domain.ValidateAdCredentials(plainUser, plainPass, guid: false);
@@ -350,7 +340,7 @@ internal static class Data
             {
                 Log.Error(
                     "Домен недоступен или сервисная учётная запись невалидна. Domain={Domain}, User={User}. Class={Class}, Method={Method}",
-                    Domain.Name, displayUser, ClassName, method);
+                    Domain.Name, "SystemAccount", ClassName, method);
                 Domain = null;
                 return false;
             }

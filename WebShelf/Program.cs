@@ -180,7 +180,7 @@ static async Task<IResult> LoginAsync(
         {
             Log.Warning(
                 "Попытка входа во время блокировки. Ip={Ip}, User={User}, RemainSec={Sec}. Class={Class}, Method={Method}",
-                clientIp, userKey, remainBefore, className, method);
+                clientIp, "UserAccount", remainBefore, className, method);
             return Results.Redirect($"/?error=locked&retry={remainBefore}");
         }
 
@@ -198,7 +198,7 @@ static async Task<IResult> LoginAsync(
             int lockedSec = loginGuard.RecordFailure(clientIp, userKey);
             Log.Warning(
                 "Неудачная попытка входа. Ip={Ip}, User={User}, LockedSec={Sec}. Class={Class}, Method={Method}",
-                clientIp, userKey, lockedSec, className, method);
+                clientIp, "UserAccount", lockedSec, className, method);
 
             if (lockedSec > 0)
                 return Results.Redirect($"/?error=locked&retry={lockedSec}");

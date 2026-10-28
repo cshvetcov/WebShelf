@@ -112,9 +112,13 @@ internal sealed class LoginGuard
                         if (sec > maxRemain)
                             maxRemain = sec;
 
+                        // Не светим реальные имена учётных записей в логах
+                        string logKey = key.StartsWith("user:", StringComparison.OrdinalIgnoreCase)
+                            ? "user:UserAccount"
+                            : key;
                         Log.Warning(
                             "Блокировка входа. Key={Key}, LockoutSeconds={Seconds}. Class={Class}, Method={Method}",
-                            key, sec, ClassName, method);
+                            logKey, sec, ClassName, method);
                     }
                 }
             }

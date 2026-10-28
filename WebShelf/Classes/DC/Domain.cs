@@ -141,7 +141,7 @@ internal class Domain
 
         Log.Debug(
             "Создан экземпляр Domain. Class={Class}, Method={Method}, Domain={Domain}, User={User}, Path={Path}",
-            ClassName, method, Name, userName, Path);
+            ClassName, method, Name, "SystemAccount", Path);
     }
 
     /// <summary>
@@ -234,7 +234,7 @@ internal class Domain
 
             Log.Debug(
                 "Подключение к AD для списка пользователей. Class={Class}, Method={Method}, Domain={Domain}, Path={Path}, User={User}",
-                ClassName, method, Name, Path, serviceUser);
+                ClassName, method, Name, Path, "SystemAccount");
 
             // AuthenticationTypes.Secure — negotiate/Kerberos или NTLM; без serverless-сбоев 0x8007054B
             using DirectoryEntry searchRoot = new(
@@ -334,12 +334,14 @@ internal class Domain
         }
 
         string normalizedUser = (NormalizeUserName(username) ?? string.Empty).Trim();
+        // В логах не светим реальные имена учётных записей
+        string accountLabel = guid ? "UserAccount" : "SystemAccount";
 
         try
         {
             Log.Debug(
                 "Начало проверки учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}, CheckGuid={CheckGuid}",
-                ClassName, method, Name, normalizedUser, guid);
+                ClassName, method, Name, accountLabel, guid);
 
             // Проверка логина/пароля (контекст без сервисной учётки)
             using (PrincipalContext authContext = new(ContextType.Domain, Name))
@@ -348,7 +350,7 @@ internal class Domain
                 {
                     Log.Warning(
                         "Неверные учётные данные. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                        ClassName, method, Name, normalizedUser);
+                        ClassName, method, Name, accountLabel);
                     return false;
                 }
             }
@@ -358,7 +360,7 @@ internal class Domain
             {
                 Log.Information(
                     "Учётные данные подтверждены (без проверки GUID). Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                    ClassName, method, Name, normalizedUser);
+                    ClassName, method, Name, accountLabel);
                 return true;
             }
 
@@ -367,7 +369,7 @@ internal class Domain
             {
                 Log.Error(
                     "GUID системы не задан. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                    ClassName, method, Name, normalizedUser);
+                    ClassName, method, Name, accountLabel);
                 return false;
             }
 
@@ -388,7 +390,7 @@ internal class Domain
             {
                 Log.Warning(
                     "Пользователь не найден в AD после успешной аутентификации. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                    ClassName, method, Name, normalizedUser);
+                    ClassName, method, Name, accountLabel);
                 return false;
             }
 
@@ -397,7 +399,7 @@ internal class Domain
             {
                 Log.Warning(
                     "Не удалось получить DirectoryEntry для пользователя. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                    ClassName, method, Name, normalizedUser);
+                    ClassName, method, Name, accountLabel);
                 return false;
             }
 
@@ -411,13 +413,13 @@ internal class Domain
             {
                 Log.Information(
                     "Учётные данные и GUID подтверждены. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                    ClassName, method, Name, normalizedUser);
+                    ClassName, method, Name, accountLabel);
             }
             else
             {
                 Log.Warning(
                     "Пользователь не разрешён для WebShelf (GUID не найден в info). Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                    ClassName, method, Name, normalizedUser);
+                    ClassName, method, Name, accountLabel);
             }
 
             return allowed;
@@ -426,7 +428,7 @@ internal class Domain
         {
             Log.Error(ex,
                 "Контроллер домена недоступен при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                ClassName, method, Name, normalizedUser);
+                ClassName, method, Name, accountLabel);
 
             throw new InvalidOperationException(
                 "Не удалось подключиться к Active Directory.",
@@ -436,7 +438,7 @@ internal class Domain
         {
             Log.Error(ex,
                 "Ошибка при проверке учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                ClassName, method, Name, normalizedUser);
+                ClassName, method, Name, accountLabel);
 
             throw new InvalidOperationException(
                 "Ошибка при проверке учётных данных в Active Directory.", ex);
@@ -515,13 +517,13 @@ internal class Domain
         {
             Log.Error(ex,
                 "Ошибка при нормализации имени пользователя. Class={Class}, Method={Method}, UserName={UserName}",
-                ClassName, method, userName);
+                ClassName, method, "UserAccount");
             return null;
         }
 
         void WarnInvalid(string reason) =>
             Log.Warning(
                 "{Reason} Class={Class}, Method={Method}, UserName={UserName}",
-                reason, ClassName, method, userName);
+                reason, ClassName, method, "UserAccount");
     }
 }
