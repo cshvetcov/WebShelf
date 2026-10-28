@@ -240,11 +240,11 @@ static async Task<IResult> LogoutAsync(HttpContext context)
     try
     {
         await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-        return Results.Redirect("/");
+        return Results.Redirect("/entry");
     }
     catch (Exception ex)
     {
         Log.Error(ex, "Исключение в {Class}.{Method}", "WebShelf.Program", nameof(LogoutAsync));
-        return Results.Redirect("/");
+        return Results.Redirect("/entry");
     }
 }

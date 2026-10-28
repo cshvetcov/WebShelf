@@ -2,68 +2,29 @@
 @rendermode InteractiveServer
 
 @using Microsoft.AspNetCore.Components.Authorization
-@using WebShelf.Classes.Service
-@using WebShelf.Classes.DC
+@using WebShelf.Components.Shared
 
 @inject NavigationManager Navigation
 @inject AuthenticationStateProvider AuthStateProvider
 @inject ILogger<Home> Logger
+@inject IJSRuntime Js
 
 <PageTitle>WebShelf</PageTitle>
 
 @if (isAuthenticated)
 {
-    <div class="alert alert-success d-flex justify-content-between align-items-center">
-        <span>Вы вошли как <strong>@currentUser</strong></span>
-        @* Полный переход (без enhanced navigation), браузер следует за 302 на /entry *@
-        <a class="btn btn-outline-danger btn-sm" href="/account/logout" data-enhance-nav="false">Выйти</a>
-    </div>
-
-    <h1>Пользователи системы WebShelf</h1>
-
-    @if (users.Count == 0)
-    {
-        <div class="alert alert-warning">Пользователи не найдены.</div>
-    }
-    else
-    {
-        <table class="table table-striped table-hover">
-            <thead>
-                <tr>
-                    <th>Логин</th>
-                    <th>Отображаемое имя</th>
-                    <th>Электронная почта</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (UserInfo user in users)
-                {
-                    <tr>
-                        <td>@user.SamAccountName</td>
-                        <td>@user.DisplayName</td>
-                        <td>@user.Email</td>
-                    </tr>
-                }
-            </tbody>
-        </table>
-    }
+    <RibbonMenu CurrentUser="@currentUser" />
 }
 
 @code {
     private const string ClassName = "WebShelf.Components.Pages.Home";
 
-    /// <summary>
-    /// Краткая информация о пользователе AD для таблицы.
-    /// </summary>
-    private sealed record UserInfo(string SamAccountName, string DisplayName, string Email);
-
-    private List<UserInfo> users = [];
     private bool isAuthenticated;
     private string currentUser = string.Empty;
+    private bool _pageBgApplied;
 
     /// <summary>
-    /// Если пользователь не авторизован — безусловный редирект на Entry.
-    /// Иначе загружает список пользователей домена.
+    /// Если пользователь не авторизован — редирект на Entry.
     /// </summary>
     protected override async Task OnInitializedAsync()
     {
@@ -76,12 +37,37 @@
                 Navigation.NavigateTo("/entry", forceLoad: true);
                 return;
             }
-
-            LoadUsers();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnInitializedAsync));
+        }
+    }
+
+    /// <summary>
+    /// Применяет фон страницы для ленты после рендера.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (!firstRender || _pageBgApplied || !isAuthenticated)
+            {
+                return;
+            }
+
+            await Js.InvokeVoidAsync("WebShelfRibbon.setPageBackground", true);
+            _pageBgApplied = true;
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
         }
     }
 
@@ -94,7 +80,7 @@
         {
             AuthenticationState authState = await AuthStateProvider.GetAuthenticationStateAsync();
             isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
-            currentUser = authState.User.Identity?.Name ?? "";
+            currentUser = authState.User.Identity?.Name ?? string.Empty;
         }
         catch (Exception ex)
         {
@@ -103,31 +89,4 @@
             currentUser = string.Empty;
         }
     }
-
-    /// <summary>
-    /// Загружает список пользователей домена через Data.Domain.
-    /// </summary>
-    private void LoadUsers()
-    {
-        try
-        {
-            if (Data.Domain is null) return;
-
-            IReadOnlyList<AdUserInfo> adUsers = Data.Domain.GetAllUsers();
-
-            users = adUsers
-                .Select(u => new UserInfo(
-                    u.SamAccountName,
-                    u.DisplayName,
-                    u.Email))
-                .OrderBy(u => u.DisplayName)
-                .ToList();
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(LoadUsers));
-            users = [];
-        }
-    }
-
 }

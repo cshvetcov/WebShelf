@@ -1,0 +1,299 @@
+﻿@*
+  RibbonMenu — основное ленточное меню приложения WebShelf.
+  Визуальный каркас по образцу классической ленты; функционал кнопок не подключён.
+  Стили: wwwroot/css/ribbon.css
+  Скрипт: wwwroot/js/ribbon.js
+*@
+@implements IAsyncDisposable
+@inject IJSRuntime Js
+@inject ILogger<RibbonMenu> Logger
+@inject NavigationManager Navigation
+
+<div id="@RibbonElementId" class="ws-ribbon" role="region" aria-label="Главное меню">
+    @* Верхняя полоса приложения *@
+    <div class="ws-ribbon-appbar">
+        <div class="ws-ribbon-appbar-title">
+            <span class="ws-ribbon-appbar-icon" aria-hidden="true">WS</span>
+            <span>WebShelf</span>
+        </div>
+        <div class="ws-ribbon-appbar-user">
+            @if (!string.IsNullOrEmpty(CurrentUser))
+            {
+                <span>@CurrentUser</span>
+            }
+            <button type="button" class="ws-ribbon-logout" @onclick="LogoutAsync">Выйти</button>
+        </div>
+    </div>
+
+    @* Вкладки *@
+    <div class="ws-ribbon-tabs" role="tablist">
+        <button type="button" class="ws-ribbon-tab is-active" role="tab" data-tab="projects"
+                aria-selected="true" id="tab-projects">
+            Проекты
+        </button>
+        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="documents"
+                aria-selected="false" id="tab-documents">
+            Документы
+        </button>
+        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="tasks"
+                aria-selected="false" id="tab-tasks">
+            Задания
+        </button>
+        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="expertise"
+                aria-selected="false" id="tab-expertise">
+            Экспертиза
+        </button>
+        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="issued"
+                aria-selected="false" id="tab-issued">
+            Выданное
+        </button>
+        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="changes"
+                aria-selected="false" id="tab-changes">
+            Изменения
+        </button>
+        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="approval"
+                aria-selected="false" id="tab-approval">
+            Согласование
+        </button>
+        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="constructor"
+                aria-selected="false" id="tab-constructor">
+            Конструктор
+        </button>
+        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="users"
+                aria-selected="false" id="tab-users">
+            Пользователи
+        </button>
+    </div>
+
+    @* Содержимое вкладок (только визуальные группы, без обработчиков) *@
+    <div class="ws-ribbon-content">
+        @* Панель «Проекты» *@
+        <div class="ws-ribbon-panel is-active" data-panel="projects" role="tabpanel" aria-labelledby="tab-projects">
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-btn" title="Новый проект">
+                        <span class="ws-ribbon-btn-icon" aria-hidden="true">📁</span>
+                        <span class="ws-ribbon-btn-text">Новый проект</span>
+                    </div>
+                    <div class="ws-ribbon-btn" title="Текущие проекты">
+                        <span class="ws-ribbon-btn-icon" aria-hidden="true">📋</span>
+                        <span class="ws-ribbon-btn-text">Текущие проекты</span>
+                    </div>
+                    <div class="ws-ribbon-btn" title="Обновить">
+                        <span class="ws-ribbon-btn-icon" aria-hidden="true">🔄</span>
+                        <span class="ws-ribbon-btn-text">Обновить</span>
+                    </div>
+                </div>
+                <div class="ws-ribbon-group-label">Управление</div>
+            </div>
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-filter">
+                        <span class="ws-ribbon-filter-label">Организация:</span>
+                        <select class="ws-ribbon-filter-select" disabled aria-label="Организация">
+                            <option>Все</option>
+                        </select>
+                    </div>
+                    <div class="ws-ribbon-filter-check">
+                        <input type="checkbox" id="ribbon-only-mine" disabled checked />
+                        <label for="ribbon-only-mine">Только мои</label>
+                    </div>
+                </div>
+                <div class="ws-ribbon-group-label">Фильтрация</div>
+            </div>
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-btn" title="Закрыть проект">
+                        <span class="ws-ribbon-btn-icon" aria-hidden="true">🗄</span>
+                        <span class="ws-ribbon-btn-text">Закрыть проект</span>
+                    </div>
+                    <div class="ws-ribbon-btn" title="Не получать сообщения">
+                        <span class="ws-ribbon-btn-icon" aria-hidden="true">✉</span>
+                        <span class="ws-ribbon-btn-text">Не получать сообщения</span>
+                    </div>
+                    <div class="ws-ribbon-btn" title="Показать сообщения">
+                        <span class="ws-ribbon-btn-icon" aria-hidden="true">💬</span>
+                        <span class="ws-ribbon-btn-text">Показать сообщения</span>
+                    </div>
+                </div>
+                <div class="ws-ribbon-group-label">Действия</div>
+            </div>
+        </div>
+
+        @* Остальные панели — пустые каркасы *@
+        <div class="ws-ribbon-panel" data-panel="documents" role="tabpanel" aria-labelledby="tab-documents">
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">📄</span><span class="ws-ribbon-btn-text">Документы</span></div>
+                </div>
+                <div class="ws-ribbon-group-label">Документы</div>
+            </div>
+        </div>
+        <div class="ws-ribbon-panel" data-panel="tasks" role="tabpanel" aria-labelledby="tab-tasks">
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">✅</span><span class="ws-ribbon-btn-text">Задания</span></div>
+                </div>
+                <div class="ws-ribbon-group-label">Задания</div>
+            </div>
+        </div>
+        <div class="ws-ribbon-panel" data-panel="expertise" role="tabpanel" aria-labelledby="tab-expertise">
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">🔍</span><span class="ws-ribbon-btn-text">Экспертиза</span></div>
+                </div>
+                <div class="ws-ribbon-group-label">Экспертиза</div>
+            </div>
+        </div>
+        <div class="ws-ribbon-panel" data-panel="issued" role="tabpanel" aria-labelledby="tab-issued">
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">📤</span><span class="ws-ribbon-btn-text">Выданное</span></div>
+                </div>
+                <div class="ws-ribbon-group-label">Выданное</div>
+            </div>
+        </div>
+        <div class="ws-ribbon-panel" data-panel="changes" role="tabpanel" aria-labelledby="tab-changes">
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">📝</span><span class="ws-ribbon-btn-text">Изменения</span></div>
+                </div>
+                <div class="ws-ribbon-group-label">Изменения</div>
+            </div>
+        </div>
+        <div class="ws-ribbon-panel" data-panel="approval" role="tabpanel" aria-labelledby="tab-approval">
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">✔️</span><span class="ws-ribbon-btn-text">Согласование</span></div>
+                </div>
+                <div class="ws-ribbon-group-label">Согласование</div>
+            </div>
+        </div>
+        <div class="ws-ribbon-panel" data-panel="constructor" role="tabpanel" aria-labelledby="tab-constructor">
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">🛠</span><span class="ws-ribbon-btn-text">Конструктор</span></div>
+                </div>
+                <div class="ws-ribbon-group-label">Конструктор</div>
+            </div>
+        </div>
+        <div class="ws-ribbon-panel" data-panel="users" role="tabpanel" aria-labelledby="tab-users">
+            <div class="ws-ribbon-group">
+                <div class="ws-ribbon-group-items">
+                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">👥</span><span class="ws-ribbon-btn-text">Пользователи</span></div>
+                </div>
+                <div class="ws-ribbon-group-label">Пользователи</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private const string ClassName = "WebShelf.Components.Shared.RibbonMenu";
+
+    /// <summary>
+    /// Отображаемое имя текущего пользователя (в заголовке ленты).
+    /// </summary>
+    [Parameter]
+    public string CurrentUser { get; set; } = string.Empty;
+
+
+    /// <summary>
+    /// Выход через браузерный переход (window.location), минуя enhanced navigation Blazor.
+    /// Браузер сам следует 302 → /entry и показывает окно входа.
+    /// </summary>
+    private async Task LogoutAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("WebShelfRibbon.logout");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+            // Fallback, если JS ещё не готов
+            try
+            {
+                Navigation.NavigateTo("/account/logout", forceLoad: true);
+            }
+            catch (Exception ex2)
+            {
+                Logger.LogError(ex2, "Исключение в {Class}.{Method}", ClassName, nameof(LogoutAsync));
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(LogoutAsync));
+        }
+    }
+
+    /// <summary>
+    /// Уникальный id корневого элемента ленты для JS interop.
+    /// </summary>
+    private string RibbonElementId { get; } = "ws-ribbon-" + Guid.NewGuid().ToString("N")[..8];
+
+    /// <summary>
+    /// true после успешного вызова WebShelfRibbon.init.
+    /// </summary>
+    private bool _jsInitialized;
+
+    /// <summary>
+    /// После первого интерактивного рендера инициализирует переключение вкладок.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (!firstRender || _jsInitialized)
+            {
+                return;
+            }
+
+            await Js.InvokeVoidAsync("WebShelfRibbon.init", RibbonElementId);
+            _jsInitialized = true;
+        }
+        catch (JSDisconnectedException)
+        {
+            // Цепь Blazor разорвана.
+        }
+        catch (InvalidOperationException)
+        {
+            // Статический prerender — interop недоступен.
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
+        }
+    }
+
+    /// <summary>
+    /// Освобождает JS-ресурсы ленты.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (!_jsInitialized)
+        {
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("WebShelfRibbon.dispose", RibbonElementId);
+            _jsInitialized = false;
+        }
+        catch (JSDisconnectedException)
+        {
+            // Цепь уже закрыта.
+        }
+        catch (InvalidOperationException)
+        {
+            // Статический контекст.
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(DisposeAsync));
+        }
+    }
+}

@@ -1,0 +1,310 @@
+﻿/**
+ * ribbon.css — стили ленточного меню (Ribbon) WebShelf.
+ * Визуальный язык по скриншоту классической Office-ленты (светлая серебристо-голубая).
+ */
+
+/* Фон страницы с лентой */
+body.ws-ribbon-page {
+    min-height: 100vh;
+    margin: 0;
+    background-color: #E8E8E8;
+    font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #1E1E1E;
+}
+
+/* Корневой контейнер ленты */
+.ws-ribbon {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    background: linear-gradient(180deg, #F0F4F8 0%, #DCE6F0 100%);
+    border-bottom: 1px solid #A0B0C0;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+    user-select: none;
+}
+
+/* Верхняя полоса заголовка приложения (как «Степная 4э») */
+.ws-ribbon-appbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.3rem 0.75rem;
+    background: linear-gradient(180deg, #B8D0E8 0%, #8FB0D0 45%, #7A9FC0 100%);
+    border-bottom: 1px solid #6A8AA8;
+    min-height: 1.75rem;
+    color: #1A3050;
+}
+
+.ws-ribbon-appbar-title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #1A3050;
+}
+
+.ws-ribbon-appbar-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    background: linear-gradient(135deg, #4A7A9A, #2A4A6A);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.55rem;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+}
+
+/* Пользователь + выход справа в заголовке */
+.ws-ribbon-appbar-user {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    color: #1A3050;
+}
+
+    .ws-ribbon-appbar-user strong {
+        font-weight: 600;
+    }
+
+.ws-ribbon-logout {
+    display: inline-block;
+    color: #1A3050;
+    text-decoration: none;
+    font-family: inherit;
+    font-size: 0.75rem;
+    line-height: 1.2;
+    padding: 0.2rem 0.55rem;
+    border: 1px solid rgba(26, 48, 80, 0.35);
+    border-radius: 3px;
+    background: linear-gradient(180deg, #E8F0F8 0%, #C8D8E8 100%);
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+    .ws-ribbon-logout:hover {
+        background: linear-gradient(180deg, #F4F8FC 0%, #D0E0F0 100%);
+        border-color: rgba(26, 48, 80, 0.55);
+    }
+
+/* Вкладки */
+.ws-ribbon-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0;
+    padding: 0.15rem 0.4rem 0;
+    background: linear-gradient(180deg, #D0DCE8 0%, #C0D0E0 100%);
+    border-bottom: 1px solid #A0B0C0;
+    min-height: 2rem;
+}
+
+.ws-ribbon-tab {
+    position: relative;
+    padding: 0.4rem 0.95rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #2A3A4A;
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-radius: 4px 4px 0 0;
+    cursor: pointer;
+    transition: color 0.12s, background 0.12s;
+    white-space: nowrap;
+}
+
+    .ws-ribbon-tab:hover {
+        color: #0A1A2A;
+        background: rgba(255, 255, 255, 0.45);
+    }
+
+    .ws-ribbon-tab.is-active {
+        color: #0A1A2A;
+        background: linear-gradient(180deg, #FFFFFF 0%, #F4F8FC 100%);
+        border-color: #A0B0C0;
+        border-bottom-color: transparent;
+        z-index: 1;
+        margin-bottom: -1px;
+        padding-bottom: calc(0.4rem + 1px);
+    }
+
+/* Область содержимого активной вкладки */
+.ws-ribbon-content {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0;
+    padding: 0.45rem 0.5rem 0.5rem;
+    background: linear-gradient(180deg, #F8FBFE 0%, #E8F0F8 100%);
+    min-height: 4.6rem;
+    border-top: 1px solid #FFFFFF;
+}
+
+/* Группа кнопок внутри ленты */
+.ws-ribbon-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 0.6rem;
+    border-right: 1px solid #C0D0E0;
+    min-width: 4.5rem;
+}
+
+    .ws-ribbon-group:last-child {
+        border-right: none;
+    }
+
+.ws-ribbon-group-items {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.3rem;
+    flex: 1;
+    padding-bottom: 0.2rem;
+}
+
+.ws-ribbon-group-label {
+    font-size: 0.65rem;
+    color: #6A7A8A;
+    text-align: center;
+    margin-top: auto;
+    padding-top: 0.15rem;
+    width: 100%;
+}
+
+/* Кнопка ленты (визуальный каркас) */
+.ws-ribbon-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.15rem;
+    min-width: 3.2rem;
+    max-width: 5.5rem;
+    padding: 0.3rem 0.35rem;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: #2A3A4A;
+    font-size: 0.7rem;
+    line-height: 1.15;
+    text-align: center;
+    cursor: default;
+    transition: background 0.12s, border-color 0.12s;
+}
+
+    .ws-ribbon-btn:hover {
+        background: linear-gradient(180deg, #FFFFFF 0%, #E0ECF8 100%);
+        border-color: #A0B8D0;
+    }
+
+.ws-ribbon-btn-icon {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    line-height: 1;
+    color: #3A5A7A;
+    border-radius: 3px;
+    background: linear-gradient(180deg, #F0F6FC 0%, #D0E0F0 100%);
+    border: 1px solid #B0C8E0;
+}
+
+.ws-ribbon-btn:hover .ws-ribbon-btn-icon {
+    background: linear-gradient(180deg, #FFFFFF 0%, #D8E8F8 100%);
+    border-color: #80A0C0;
+}
+
+.ws-ribbon-btn-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/* Фильтры */
+.ws-ribbon-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0.3rem;
+    font-size: 0.75rem;
+    color: #2A3A4A;
+}
+
+.ws-ribbon-filter-label {
+    white-space: nowrap;
+}
+
+.ws-ribbon-filter-select {
+    min-width: 7rem;
+    padding: 0.2rem 0.35rem;
+    font-size: 0.75rem;
+    color: #1E1E1E;
+    background: #FFFFFF;
+    border: 1px solid #A0B0C0;
+    border-radius: 3px;
+    outline: none;
+    cursor: default;
+}
+
+    .ws-ribbon-filter-select:focus {
+        border-color: #5080B0;
+        box-shadow: 0 0 0 2px rgba(80, 128, 176, 0.25);
+    }
+
+.ws-ribbon-filter-check {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    cursor: default;
+    font-size: 0.75rem;
+    color: #2A3A4A;
+}
+
+    .ws-ribbon-filter-check input {
+        width: 0.9rem;
+        height: 0.9rem;
+        accent-color: #5080B0;
+        pointer-events: none;
+    }
+
+/* Скрытые панели вкладок */
+.ws-ribbon-panel {
+    display: none;
+    width: 100%;
+}
+
+    .ws-ribbon-panel.is-active {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: stretch;
+    }
+
+/* Адаптив */
+@media (max-width: 640px) {
+    .ws-ribbon-tab {
+        padding: 0.35rem 0.6rem;
+        font-size: 0.75rem;
+    }
+
+    .ws-ribbon-group {
+        padding: 0 0.35rem;
+    }
+
+    .ws-ribbon-btn {
+        min-width: 2.8rem;
+    }
+
+    .ws-ribbon-appbar-user {
+        gap: 0.4rem;
+        font-size: 0.75rem;
+    }
+}
