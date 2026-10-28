@@ -6,28 +6,8 @@ using Serilog.Events;
 using WebShelf.Classes.Service;
 using WebShelf.Components;
 
-const string LogOutputTemplate =
-    "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}";
-
-string logsDir = Path.Combine(AppContext.BaseDirectory, "logs");
-Directory.CreateDirectory(logsDir);
-
-// В Debug-сборке перед каждым запуском очищаем Last.log,
-// чтобы файл содержал только лог текущего (последнего) запуска.
-#if DEBUG
-string lastLogPath = Path.Combine(logsDir, "Last.log");
-try
-{
-    if (File.Exists(lastLogPath)) File.Delete(lastLogPath);
-}
-catch
-{
-    // Не блокируем старт, если не удалось удалить старый Last.log
-}
-#endif
-
 // Ранний bootstrap-логгер (до Build)
-LoggerConfiguration bootstrapConfig = new LoggerConfiguration()
+Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
@@ -36,30 +16,16 @@ LoggerConfiguration bootstrapConfig = new LoggerConfiguration()
     .Enrich.WithThreadId()
     .WriteTo.Debug()
     .WriteTo.File(
-        path: Path.Combine(logsDir, "webshelf-.log"),
+        path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
         rollingInterval: RollingInterval.Day,
         retainedFileCountLimit: 30,
         shared: true,
-        outputTemplate: LogOutputTemplate);
-
-#if DEBUG
-bootstrapConfig = bootstrapConfig.WriteTo.File(
-    path: lastLogPath,
-    shared: true,
-    outputTemplate: LogOutputTemplate);
-#endif
-
-Log.Logger = bootstrapConfig.CreateLogger();
+        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}")
+    .CreateLogger();
 
 try
 {
     Log.Information("WebShelf запускается...");
-
-    if (EncryptionService.EnsureMasterKey() == null)
-    {
-        Log.Fatal("Не удалось создать или загрузить мастер-ключ. Приложение останавливается. Class={Class}, Method={Method}", "WebShelf.Program", "Main");
-        Environment.Exit(1);
-    }
 
     if (!Data.ReadConfig())
     {
@@ -69,30 +35,20 @@ try
 
     WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
-    builder.Host.UseSerilog((context, services, configuration) =>
-    {
-        configuration
-            .MinimumLevel.Information()
-            .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
-            .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
-            .Enrich.FromLogContext()
-            .Enrich.WithEnvironmentName()
-            .Enrich.WithThreadId()
-            .WriteTo.Debug()
-            .WriteTo.File(
-                path: Path.Combine(logsDir, "webshelf-.log"),
-                rollingInterval: RollingInterval.Day,
-                retainedFileCountLimit: 30,
-                shared: true,
-                outputTemplate: LogOutputTemplate);
-
-#if DEBUG
-        configuration.WriteTo.File(
-            path: lastLogPath,
+    builder.Host.UseSerilog((context, services, configuration) => configuration
+        .MinimumLevel.Information()
+        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
+        .Enrich.FromLogContext()
+        .Enrich.WithEnvironmentName()
+        .Enrich.WithThreadId()
+        .WriteTo.Debug()
+        .WriteTo.File(
+            path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 30,
             shared: true,
-            outputTemplate: LogOutputTemplate);
-#endif
-    });
+            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}"));
 
     // Схема и порт только из Server.conf (независимо от launchSettings.json и профилей http/https)
     string listenUrl = $"{Data.Scheme}://0.0.0.0:{Data.Port}";
@@ -107,8 +63,8 @@ try
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
         .AddCookie(options =>
         {
-            options.LoginPath = "/entry";
-            options.AccessDeniedPath = "/entry";
+            options.LoginPath = "/";
+            options.AccessDeniedPath = "/";
             options.ExpireTimeSpan = TimeSpan.FromHours(8);
             options.SlidingExpiration = true;
             options.Cookie.Name = "WebShelf.Auth";
@@ -144,6 +100,9 @@ try
 
     app.UseSerilogRequestLogging();
 
+    app.MapPost("/account/login", LoginAsync);
+    app.MapGet("/account/logout", LogoutAsync);
+
     app.UseAuthentication();
     app.UseAuthorization();
 
@@ -162,9 +121,6 @@ try
     }
 
     app.UseAntiforgery();
-
-    app.MapPost("/account/login", LoginAsync);
-    app.MapGet("/account/logout", LogoutAsync);
 
     app.MapStaticAssets();
     app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
@@ -202,10 +158,10 @@ static async Task<IResult> LoginAsync(
         catch (AntiforgeryValidationException ex)
         {
             Log.Warning(ex, "Неверный antiforgery-токен при входе. Class={Class}, Method={Method}", className, method);
-            return Results.Redirect("/entry?error=invalid");
+            return Results.Redirect("/?error=invalid");
         }
 
-        var form = await context.Request.ReadFormAsync();
+        IFormCollection form = await context.Request.ReadFormAsync();
         string? username = form["username"];
         string? password = form["password"];
         bool rememberMe = form["rememberMe"] == "true";
@@ -218,16 +174,16 @@ static async Task<IResult> LoginAsync(
         {
             Log.Warning(
                 "Попытка входа во время блокировки. Ip={Ip}, User={User}, RemainSec={Sec}. Class={Class}, Method={Method}",
-                clientIp, "UserAccount", remainBefore, className, method);
-            return Results.Redirect($"/entry?error=locked&retry={remainBefore}");
+                clientIp, userKey, remainBefore, className, method);
+            return Results.Redirect($"/?error=locked&retry={remainBefore}");
         }
 
         if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null)
         {
             int lockedSec = loginGuard.RecordFailure(clientIp, userKey);
             if (lockedSec > 0)
-                return Results.Redirect($"/entry?error=locked&retry={lockedSec}");
-            return Results.Redirect("/entry?error=invalid");
+                return Results.Redirect($"/?error=locked&retry={lockedSec}");
+            return Results.Redirect("/?error=invalid");
         }
 
         bool isValid = Data.Domain.ValidateAdCredentials(username.Trim(), password);
@@ -236,25 +192,25 @@ static async Task<IResult> LoginAsync(
             int lockedSec = loginGuard.RecordFailure(clientIp, userKey);
             Log.Warning(
                 "Неудачная попытка входа. Ip={Ip}, User={User}, LockedSec={Sec}. Class={Class}, Method={Method}",
-                clientIp, "UserAccount", lockedSec, className, method);
+                clientIp, userKey, lockedSec, className, method);
 
             if (lockedSec > 0)
-                return Results.Redirect($"/entry?error=locked&retry={lockedSec}");
-            return Results.Redirect("/entry?error=invalid");
+                return Results.Redirect($"/?error=locked&retry={lockedSec}");
+            return Results.Redirect("/?error=invalid");
         }
 
         loginGuard.RecordSuccess(clientIp, userKey);
 
-        var claims = new List<Claim>
+        List<Claim> claims = new List<Claim>
         {
             new(ClaimTypes.Name, username.Trim()),
             new(ClaimTypes.NameIdentifier, username.Trim())
         };
 
-        var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-        var principal = new ClaimsPrincipal(identity);
+        ClaimsIdentity identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+        ClaimsPrincipal principal = new ClaimsPrincipal(identity);
 
-        var props = new AuthenticationProperties
+        AuthenticationProperties props = new AuthenticationProperties
         {
             IsPersistent = rememberMe,
             ExpiresUtc = rememberMe
@@ -272,43 +228,23 @@ static async Task<IResult> LoginAsync(
     catch (Exception ex)
     {
         Log.Error(ex, "Исключение в {Class}.{Method}", className, method);
-        return Results.Redirect("/entry?error=server");
+        return Results.Redirect("/?error=server");
     }
 }
 
 /// <summary>
-/// Обработчик GET /account/logout — выход, очистка cookie и переход на страницу входа.
-/// Использует Response.Redirect (302), а не IResult, чтобы редирект гарантированно уходил в браузер.
+/// Обработчик GET /account/logout — выход и очистка cookie.
 /// </summary>
-static async Task LogoutAsync(HttpContext context)
+static async Task<IResult> LogoutAsync(HttpContext context)
 {
-    const string className = "WebShelf.Program";
-    const string method = nameof(LogoutAsync);
-
     try
     {
         await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-
-        // Явно гасим auth-cookie (Path/SameSite как при выдаче)
-        context.Response.Cookies.Delete(
-            "WebShelf.Auth",
-            new CookieOptions
-            {
-                Path = "/",
-                HttpOnly = true,
-                Secure = context.Request.IsHttps,
-                SameSite = SameSiteMode.Lax
-            });
-
-        context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
-        context.Response.Headers.Pragma = "no-cache";
-
-        Log.Information("Выход выполнен, редирект на /entry. Class={Class}, Method={Method}", className, method);
-        context.Response.Redirect("/entry", permanent: false);
+        return Results.Redirect("/");
     }
     catch (Exception ex)
     {
-        Log.Error(ex, "Исключение в {Class}.{Method}", className, method);
-        context.Response.Redirect("/entry", permanent: false);
+        Log.Error(ex, "Исключение в {Class}.{Method}", "WebShelf.Program", nameof(LogoutAsync));
+        return Results.Redirect("/");
     }
 }

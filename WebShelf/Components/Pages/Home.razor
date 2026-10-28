@@ -3,6 +3,7 @@
 
 @using Microsoft.AspNetCore.Components.Authorization
 @using WebShelf.Classes.Service
+@using WebShelf.Classes.DC
 
 @inject NavigationManager Navigation
 @inject AuthenticationStateProvider AuthStateProvider
@@ -35,7 +36,7 @@
                 </tr>
             </thead>
             <tbody>
-                @foreach (var user in users)
+                @foreach (UserInfo user in users)
                 {
                     <tr>
                         <td>@user.SamAccountName</td>
@@ -91,7 +92,7 @@
     {
         try
         {
-            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            AuthenticationState authState = await AuthStateProvider.GetAuthenticationStateAsync();
             isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
             currentUser = authState.User.Identity?.Name ?? "";
         }
@@ -112,7 +113,7 @@
         {
             if (Data.Domain is null) return;
 
-            var adUsers = Data.Domain.GetAllUsers();
+            IReadOnlyList<AdUserInfo> adUsers = Data.Domain.GetAllUsers();
 
             users = adUsers
                 .Select(u => new UserInfo(

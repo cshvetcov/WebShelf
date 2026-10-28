@@ -4,6 +4,7 @@
 
 @using Microsoft.AspNetCore.Antiforgery
 @using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.Extensions.Primitives
 @using WebShelf.Classes.Service
 @using WebShelf.Components.Shared
 
@@ -106,7 +107,7 @@
     {
         try
         {
-            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            AuthenticationState authState = await AuthStateProvider.GetAuthenticationStateAsync();
             if (authState.User.Identity?.IsAuthenticated == true)
             {
                 Navigation.NavigateTo("/", forceLoad: true);
@@ -120,15 +121,15 @@
                 antiforgeryToken = tokens.RequestToken ?? string.Empty;
             }
 
-            var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
-            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+            Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+            Dictionary<string, StringValues> query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
 
-            if (query.TryGetValue("error", out var error))
+            if (query.TryGetValue("error", out StringValues error))
             {
                 if (error == "locked")
                 {
                     int retry = 30;
-                    if (query.TryGetValue("retry", out var retryVal) &&
+                    if (query.TryGetValue("retry", out StringValues retryVal) &&
                         int.TryParse(retryVal, out int parsed) &&
                         parsed > 0)
                     {
