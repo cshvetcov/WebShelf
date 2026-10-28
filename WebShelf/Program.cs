@@ -6,8 +6,28 @@ using Serilog.Events;
 using WebShelf.Classes.Service;
 using WebShelf.Components;
 
+const string LogOutputTemplate =
+    "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}";
+
+string logsDir = Path.Combine(AppContext.BaseDirectory, "logs");
+Directory.CreateDirectory(logsDir);
+
+// В Debug-сборке перед каждым запуском очищаем Last.log,
+// чтобы файл содержал только лог текущего (последнего) запуска.
+#if DEBUG
+string lastLogPath = Path.Combine(logsDir, "Last.log");
+try
+{
+    if (File.Exists(lastLogPath)) File.Delete(lastLogPath);
+}
+catch
+{
+    // Не блокируем старт, если не удалось удалить старый Last.log
+}
+#endif
+
 // Ранний bootstrap-логгер (до Build)
-Log.Logger = new LoggerConfiguration()
+LoggerConfiguration bootstrapConfig = new LoggerConfiguration()
     .MinimumLevel.Information()
     .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
     .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
@@ -16,12 +36,20 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.WithThreadId()
     .WriteTo.Debug()
     .WriteTo.File(
-        path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
+        path: Path.Combine(logsDir, "webshelf-.log"),
         rollingInterval: RollingInterval.Day,
         retainedFileCountLimit: 30,
         shared: true,
-        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}")
-    .CreateLogger();
+        outputTemplate: LogOutputTemplate);
+
+#if DEBUG
+bootstrapConfig = bootstrapConfig.WriteTo.File(
+    path: lastLogPath,
+    shared: true,
+    outputTemplate: LogOutputTemplate);
+#endif
+
+Log.Logger = bootstrapConfig.CreateLogger();
 
 try
 {
@@ -41,20 +69,30 @@ try
 
     WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
-    builder.Host.UseSerilog((context, services, configuration) => configuration
-        .MinimumLevel.Information()
-        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
-        .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
-        .Enrich.FromLogContext()
-        .Enrich.WithEnvironmentName()
-        .Enrich.WithThreadId()
-        .WriteTo.Debug()
-        .WriteTo.File(
-            path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
-            rollingInterval: RollingInterval.Day,
-            retainedFileCountLimit: 30,
+    builder.Host.UseSerilog((context, services, configuration) =>
+    {
+        configuration
+            .MinimumLevel.Information()
+            .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+            .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
+            .Enrich.FromLogContext()
+            .Enrich.WithEnvironmentName()
+            .Enrich.WithThreadId()
+            .WriteTo.Debug()
+            .WriteTo.File(
+                path: Path.Combine(logsDir, "webshelf-.log"),
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: 30,
+                shared: true,
+                outputTemplate: LogOutputTemplate);
+
+#if DEBUG
+        configuration.WriteTo.File(
+            path: lastLogPath,
             shared: true,
-            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}"));
+            outputTemplate: LogOutputTemplate);
+#endif
+    });
 
     // Схема и порт только из Server.conf (независимо от launchSettings.json и профилей http/https)
     string listenUrl = $"{Data.Scheme}://0.0.0.0:{Data.Port}";
