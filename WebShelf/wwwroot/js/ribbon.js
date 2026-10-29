@@ -91,8 +91,10 @@
 
     /**
      * Выход из системы.
-     * 1) fetch /account/logout с redirect:manual — сервер сбрасывает cookie (Set-Cookie),
-     *    браузер НЕ следует за 302 (иначе Blazor/circuit ломает документ).
+     * 1) fetch POST /account/logout с redirect:manual и antiforgery-токеном
+     *    (meta[name="ws-antiforgery-token"], см. App.razor) — сервер сбрасывает
+     *    cookie (Set-Cookie), браузер НЕ следует за 302 (иначе Blazor/circuit
+     *    ломает документ). Выход выполняется только по POST — защита от logout-CSRF.
      * 2) location.replace('/entry') — гарантированный переход на окно входа.
      */
     function logout() {
@@ -106,12 +108,23 @@
         }
 
         try {
+            var token = "";
+            var meta = document.querySelector('meta[name="ws-antiforgery-token"]');
+            if (meta) {
+                token = meta.getAttribute("content") || "";
+            }
+
+            var headers = { "X-Requested-With": "XMLHttpRequest" };
+            if (token) {
+                headers["RequestVerificationToken"] = token;
+            }
+
             fetch("/account/logout", {
-                method: "GET",
+                method: "POST",
                 credentials: "same-origin",
                 redirect: "manual",
                 cache: "no-store",
-                headers: { "X-Requested-With": "XMLHttpRequest" }
+                headers: headers
             }).then(goEntry, goEntry);
         } catch (e) {
             goEntry();

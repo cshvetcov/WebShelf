@@ -99,8 +99,9 @@ internal static class Data
                 return false;
             }
 
-            bool domainOk = TryInitDomain(config);
+            // GUID инициализируется первым: TryInitDomain передаёт его в конструктор Domain
             bool guidOk = TryInitGuid(config);
+            bool domainOk = TryInitDomain(config);
             bool portOk = TryInitPort(config);
             bool schemeOk = TryInitScheme(config);
 
@@ -327,8 +328,17 @@ internal static class Data
                     ClassName, method);
             }
 
-            // В Domain передаём уже зашифрованные значения
-            Domain = new Domain(domainName, encryptedUser, encryptedPass);
+            // GUID системы должен быть инициализирован до создания Domain
+            if (string.IsNullOrWhiteSpace(GUID))
+            {
+                Log.Error(
+                    "GUID системы не инициализирован при создании Domain. Class={Class}, Method={Method}",
+                    ClassName, method);
+                return false;
+            }
+
+            // В Domain передаём зашифрованные значения и GUID системы
+            Domain = new Domain(domainName, encryptedUser, encryptedPass, GUID!);
 
             Log.Information(
                 "Домен инициализирован. Domain={Domain}, User={User}. Class={Class}, Method={Method}",
@@ -484,7 +494,7 @@ internal static class Data
                 return false;
             }
 
-            string guid = config["guid"];
+            string guid = config["guid"].Trim();
 
             if (string.IsNullOrWhiteSpace(guid))
             {
@@ -494,7 +504,17 @@ internal static class Data
                 return false;
             }
 
-            GUID = guid.Trim();
+            // Значение попадает в LDAP-фильтр поиска AD: допустимы только
+            // буквы, цифры и дефисы (исключение спецсимволов фильтра).
+            if (!GuidValueIsValid(guid))
+            {
+                Log.Error(
+                    "Некорректное значение guid: допустимы только буквы, цифры и дефисы (1-64 символа). GuidLength={GuidLength}. Class={Class}, Method={Method}",
+                    guid.Length, ClassName, method);
+                return false;
+            }
+
+            GUID = guid;
 
             Log.Information(
                 "GUID системы установлен. Class={Class}, Method={Method}",
@@ -508,6 +528,36 @@ internal static class Data
                 "Ошибка инициализации GUID. Class={Class}, Method={Method}",
                 ClassName, method);
             GUID = null;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Проверяет значение GUID: только ASCII-буквы, цифры и дефисы, длина 1-64.
+    /// Исключает спецсимволы LDAP-фильтров и прочие опасные символы.
+    /// </summary>
+    /// <param name="value">Проверяемое значение (без пробелов по краям).</param>
+    /// <returns><see langword="true"/>, если значение безопасно для использования в AD.</returns>
+    private static bool GuidValueIsValid(string value)
+    {
+        const string method = nameof(GuidValueIsValid);
+
+        try
+        {
+            if (value.Length == 0 || value.Length > 64)
+                return false;
+
+            foreach (char c in value)
+            {
+                if (!char.IsAsciiLetterOrDigit(c) && c != '-')
+                    return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
             return false;
         }
     }

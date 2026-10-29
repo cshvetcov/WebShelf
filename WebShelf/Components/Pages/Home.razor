@@ -3,13 +3,16 @@
 
 @using Microsoft.AspNetCore.Components.Authorization
 @using WebShelf.Components.Shared
+@using Serilog
 
 @inject NavigationManager Navigation
 @inject AuthenticationStateProvider AuthStateProvider
-@inject ILogger<Home> Logger
 @inject IJSRuntime Js
 
 <PageTitle>WebShelf</PageTitle>
+
+@* Заголовок первого уровня для FocusOnNavigate и скринридеров *@
+<h1 class="ws-visually-hidden">WebShelf</h1>
 
 @if (isAuthenticated)
 {
@@ -40,7 +43,7 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnInitializedAsync));
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnInitializedAsync));
         }
     }
 
@@ -67,7 +70,7 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
         }
     }
 
@@ -84,7 +87,7 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(CheckAuth));
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(CheckAuth));
             isAuthenticated = false;
             currentUser = string.Empty;
         }

@@ -5,9 +5,8 @@
   Скрипт: wwwroot/js/ribbon.js
 *@
 @implements IAsyncDisposable
+@using Serilog
 @inject IJSRuntime Js
-@inject ILogger<RibbonMenu> Logger
-@inject NavigationManager Navigation
 
 <div id="@RibbonElementId" class="ws-ribbon" role="region" aria-label="Главное меню">
     @* Верхняя полоса приложения *@
@@ -197,38 +196,6 @@
     [Parameter]
     public string CurrentUser { get; set; } = string.Empty;
 
-
-    /// <summary>
-    /// Выход через браузерный переход (window.location), минуя enhanced navigation Blazor.
-    /// Браузер сам следует 302 → /entry и показывает окно входа.
-    /// </summary>
-    private async Task LogoutAsync()
-    {
-        try
-        {
-            await Js.InvokeVoidAsync("WebShelfRibbon.logout");
-        }
-        catch (JSDisconnectedException)
-        {
-        }
-        catch (InvalidOperationException)
-        {
-            // Fallback, если JS ещё не готов
-            try
-            {
-                Navigation.NavigateTo("/account/logout", forceLoad: true);
-            }
-            catch (Exception ex2)
-            {
-                Logger.LogError(ex2, "Исключение в {Class}.{Method}", ClassName, nameof(LogoutAsync));
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(LogoutAsync));
-        }
-    }
-
     /// <summary>
     /// Уникальный id корневого элемента ленты для JS interop.
     /// </summary>
@@ -238,6 +205,34 @@
     /// true после успешного вызова WebShelfRibbon.init.
     /// </summary>
     private bool _jsInitialized;
+
+    /// <summary>
+    /// Выход через fetch POST /account/logout с antiforgery-токеном
+    /// (реализация — WebShelfRibbon.logout в ribbon.js): сервер сбрасывает cookie,
+    /// затем браузер переходит на /entry. GET-эндпоинт выхода на сервере отключён
+    /// (защита от logout-CSRF), поэтому fallback-перехода по GET нет:
+    /// без JS interop выход невозможен (приложение целиком требует JS).
+    /// </summary>
+    private async Task LogoutAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("WebShelfRibbon.logout");
+        }
+        catch (JSDisconnectedException)
+        {
+            // Цепь Blazor разорвана — пользователь увидит экран переподключения.
+        }
+        catch (InvalidOperationException)
+        {
+            // JS interop недоступен (статический prerender): клики в этом режиме невозможны.
+            Log.Error("JS interop недоступен при выходе. Class={Class}, Method={Method}", ClassName, nameof(LogoutAsync));
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(LogoutAsync));
+        }
+    }
 
     /// <summary>
     /// После первого интерактивного рендера инициализирует переключение вкладок.
@@ -264,7 +259,7 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
         }
     }
 
@@ -293,7 +288,7 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(DisposeAsync));
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(DisposeAsync));
         }
     }
 }

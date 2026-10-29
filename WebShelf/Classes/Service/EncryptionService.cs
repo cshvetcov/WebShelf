@@ -49,6 +49,12 @@ internal static class EncryptionService
     private static readonly TimeSpan MasterKeyCacheAbsoluteMax = TimeSpan.FromMinutes(30);
 
     private static readonly object MasterKeyCacheSync = new();
+
+    /// <summary>
+    /// Синхронизация чтения/генерации/записи мастер-ключа в реестр:
+    /// исключает гонку при первом параллельном вызове EnsureMasterKey.
+    /// </summary>
+    private static readonly object RegistrySync = new();
     private static byte[]? _cachedMasterKey;
     private static DateTimeOffset _cachedMasterKeyExpiresUtc = DateTimeOffset.MinValue;
     private static DateTimeOffset _cachedMasterKeyLoadedUtc = DateTimeOffset.MinValue;
@@ -147,7 +153,7 @@ internal static class EncryptionService
             {
                 if (key is not null)
                 {
-                    if (!IsValidMasterKey(key) || !FixedTimeEquals(fromCache, key, 0))
+                    if (!IsValidMasterKey(key) || !CryptographicOperations.FixedTimeEquals(fromCache, key))
                     {
                         ClearKeyMaterial(fromCache);
                         Log.Warning(
@@ -172,118 +178,122 @@ internal static class EncryptionService
                 return null;
             }
 
-            // --- 3. Чтение из HKCU ---
-            byte[]? storedProtected = TryReadProtectedKeyFromRegistry();
-            if (storedProtected is not null)
+            // --- 3. Чтение из HKCU и генерация — под блокировкой RegistrySync,
+            // чтобы исключить гонку генерации при первом параллельном вызове ---
+            lock (RegistrySync)
             {
-                try
+                byte[]? storedProtected = TryReadProtectedKeyFromRegistry();
+                if (storedProtected is not null)
                 {
-                    byte[] unprotected = ProtectedData.Unprotect(
-                        storedProtected, optionalEntropy: null, ProtectionScope);
                     try
                     {
-                        if (!IsValidMasterKey(unprotected))
+                        byte[] unprotected = ProtectedData.Unprotect(
+                            storedProtected, optionalEntropy: null, ProtectionScope);
+                        try
                         {
-                            Log.Warning(
-                                "Ключ из реестра имеет некорректную длину. Length={Length}. Class={Class}, Method={Method}",
-                                unprotected.Length, ClassName, method);
-                            return null;
-                        }
+                            if (!IsValidMasterKey(unprotected))
+                            {
+                                Log.Warning(
+                                    "Ключ из реестра имеет некорректную длину. Length={Length}. Class={Class}, Method={Method}",
+                                    unprotected.Length, ClassName, method);
+                                return null;
+                            }
 
-                        if (key is not null && !FixedTimeEquals(unprotected, key, 0))
-                        {
-                            Log.Warning(
-                                "Переданный ключ не совпадает с ключом в реестре. Class={Class}, Method={Method}",
+                            if (key is not null && !CryptographicOperations.FixedTimeEquals(unprotected, key))
+                            {
+                                Log.Warning(
+                                    "Переданный ключ не совпадает с ключом в реестре. Class={Class}, Method={Method}",
+                                    ClassName, method);
+                                return null;
+                            }
+
+                            byte[] result = (byte[])unprotected.Clone();
+                            SetCachedMasterKey(unprotected);
+
+                            Log.Information(
+                                "Мастер-ключ прочитан из HKCU. Class={Class}, Method={Method}",
                                 ClassName, method);
-                            return null;
+                            return result;
                         }
-
-                        byte[] result = (byte[])unprotected.Clone();
-                        SetCachedMasterKey(unprotected);
-
-                        Log.Information(
-                            "Мастер-ключ прочитан из HKCU. Class={Class}, Method={Method}",
+                        finally
+                        {
+                            ClearKeyMaterial(unprotected);
+                        }
+                    }
+                    catch (CryptographicException ex)
+                    {
+                        Log.Error(ex,
+                            "Не удалось расшифровать мастер-ключ из реестра (DPAPI CurrentUser). Class={Class}, Method={Method}",
                             ClassName, method);
-                        return result;
+                        return null;
                     }
                     finally
                     {
-                        ClearKeyMaterial(unprotected);
+                        ClearKeyMaterial(storedProtected);
                     }
+                }
+
+                // --- 4. Ключа в реестре нет: генерируем или берём переданный ---
+                byte[] masterKey;
+                bool generated;
+
+                if (key is not null)
+                {
+                    masterKey = (byte[])key.Clone();
+                    generated = false;
+                }
+                else
+                {
+                    masterKey = CreateKey();
+                    generated = true;
+                }
+
+                try
+                {
+                    byte[] protectedBlob = ProtectedData.Protect(
+                        masterKey, optionalEntropy: null, ProtectionScope);
+                    try
+                    {
+                        if (!TryWriteProtectedKeyToRegistry(protectedBlob))
+                        {
+                            Log.Error(
+                                "Не удалось записать мастер-ключ в HKCU. Class={Class}, Method={Method}",
+                                ClassName, method);
+                            ClearKeyMaterial(masterKey);
+                            return null;
+                        }
+                    }
+                    finally
+                    {
+                        ClearKeyMaterial(protectedBlob);
+                    }
+
+                    byte[] result = (byte[])masterKey.Clone();
+                    SetCachedMasterKey(masterKey);
+
+                    Log.Information(
+                        "Мастер-ключ {Action} и сохранён в HKCU. Class={Class}, Method={Method}",
+                        generated ? "сгенерирован" : "принят",
+                        ClassName, method);
+
+                    return result;
                 }
                 catch (CryptographicException ex)
                 {
                     Log.Error(ex,
-                        "Не удалось расшифровать мастер-ключ из реестра (DPAPI CurrentUser). Class={Class}, Method={Method}",
+                        "Ошибка DPAPI при защите мастер-ключа. Class={Class}, Method={Method}",
                         ClassName, method);
+                    ClearKeyMaterial(masterKey);
                     return null;
                 }
-                finally
+                catch (UnauthorizedAccessException ex)
                 {
-                    ClearKeyMaterial(storedProtected);
+                    Log.Error(ex,
+                        "Нет прав на запись в HKCU. Class={Class}, Method={Method}",
+                        ClassName, method);
+                    ClearKeyMaterial(masterKey);
+                    return null;
                 }
-            }
-
-            // --- 4. Ключа в реестре нет: генерируем или берём переданный ---
-            byte[] masterKey;
-            bool generated;
-
-            if (key is not null)
-            {
-                masterKey = (byte[])key.Clone();
-                generated = false;
-            }
-            else
-            {
-                masterKey = CreateKey();
-                generated = true;
-            }
-
-            try
-            {
-                byte[] protectedBlob = ProtectedData.Protect(
-                    masterKey, optionalEntropy: null, ProtectionScope);
-                try
-                {
-                    if (!TryWriteProtectedKeyToRegistry(protectedBlob))
-                    {
-                        Log.Error(
-                            "Не удалось записать мастер-ключ в HKCU. Class={Class}, Method={Method}",
-                            ClassName, method);
-                        ClearKeyMaterial(masterKey);
-                        return null;
-                    }
-                }
-                finally
-                {
-                    ClearKeyMaterial(protectedBlob);
-                }
-
-                byte[] result = (byte[])masterKey.Clone();
-                SetCachedMasterKey(masterKey);
-
-                Log.Information(
-                    "Мастер-ключ {Action} и сохранён в HKCU. Class={Class}, Method={Method}",
-                    generated ? "сгенерирован" : "принят",
-                    ClassName, method);
-
-                return result;
-            }
-            catch (CryptographicException ex)
-            {
-                Log.Error(ex,
-                    "Ошибка DPAPI при защите мастер-ключа. Class={Class}, Method={Method}",
-                    ClassName, method);
-                ClearKeyMaterial(masterKey);
-                return null;
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                Log.Error(ex,
-                    "Нет прав на запись в HKCU. Class={Class}, Method={Method}",
-                    ClassName, method);
-                ClearKeyMaterial(masterKey);
-                return null;
             }
         }
         catch (Exception ex)
@@ -758,7 +768,11 @@ internal static class EncryptionService
                 using (HMACSHA256 hmac = new HMACSHA256(hmacKey))
                 {
                     byte[] expectedMac = hmac.ComputeHash(encryptedData, 0, macOffset);
-                    bool isValidMac = FixedTimeEquals(expectedMac, encryptedData, macOffset);
+
+                    // Сравнение MAC за постоянное время (реализация BCL) — защита от timing-атак
+                    bool isValidMac = CryptographicOperations.FixedTimeEquals(
+                        expectedMac,
+                        encryptedData.AsSpan(macOffset, HmacSizeBytes));
                     if (!isValidMac)
                     {
                         Log.Warning(
@@ -1003,27 +1017,6 @@ internal static class EncryptionService
             aesKey = kdf.ComputeHash(AesKeyDerivationLabel);
             hmacKey = kdf.ComputeHash(HmacKeyDerivationLabel);
         }
-    }
-
-    /// <summary>
-    /// Сравнивает MAC с ожидаемым значением за постоянное время (защита от timing-атак).
-    /// </summary>
-    private static bool FixedTimeEquals(byte[] expected, byte[] actual, int actualOffset)
-    {
-        if (expected is null || actual is null)
-            return false;
-        if (actualOffset < 0)
-            return false;
-        if (actual.Length - actualOffset < expected.Length)
-            return false;
-
-        int difference = 0;
-        for (int i = 0; i < expected.Length; i++)
-        {
-            difference |= expected[i] ^ actual[actualOffset + i];
-        }
-
-        return difference == 0;
     }
 
     /// <summary>

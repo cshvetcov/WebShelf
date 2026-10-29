@@ -6,21 +6,8 @@ using Serilog.Events;
 using WebShelf.Classes.Service;
 using WebShelf.Components;
 
-// Ранний bootstrap-логгер (до Build)
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
-    .Enrich.FromLogContext()
-    .Enrich.WithEnvironmentName()
-    .Enrich.WithThreadId()
-    .WriteTo.Debug()
-    .WriteTo.File(
-        path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
-        rollingInterval: RollingInterval.Day,
-        retainedFileCountLimit: 30,
-        shared: true,
-        outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}")
+// Ранний bootstrap-логгер (до Build): общая настройка вынесена в ApplySerilogDefaults
+Log.Logger = ApplySerilogDefaults(new LoggerConfiguration())
     .CreateLogger();
 
 try
@@ -33,22 +20,19 @@ try
         Environment.Exit(1);
     }
 
+    // Предупреждение о небезопасной схеме: при http cookie аутентификации
+    // передаются без флага Secure и могут быть перехвачены в канале связи.
+    if (string.Equals(Data.Scheme, "http", StringComparison.OrdinalIgnoreCase))
+    {
+        Log.Warning(
+            "Схема http: cookie аутентификации передаются без защиты Secure. Рекомендуется использовать https. Class={Class}, Method={Method}",
+            "WebShelf.Program", "Main");
+    }
+
     WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
-    builder.Host.UseSerilog((context, services, configuration) => configuration
-        .MinimumLevel.Information()
-        .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
-        .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
-        .Enrich.FromLogContext()
-        .Enrich.WithEnvironmentName()
-        .Enrich.WithThreadId()
-        .WriteTo.Debug()
-        .WriteTo.File(
-            path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
-            rollingInterval: RollingInterval.Day,
-            retainedFileCountLimit: 30,
-            shared: true,
-            outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}"));
+    // Единая настройка Serilog для bootstrap-логгера и хоста (без дублирования)
+    builder.Host.UseSerilog((context, services, configuration) => ApplySerilogDefaults(configuration));
 
     // Схема и порт только из Server.conf (независимо от launchSettings.json и профилей http/https)
     string listenUrl = $"{Data.Scheme}://0.0.0.0:{Data.Port}";
@@ -100,6 +84,9 @@ try
 
     app.UseSerilogRequestLogging();
 
+    // Заголовки безопасности (CSP, X-Frame-Options и др.) добавляются во все ответы
+    app.UseWebShelfSecurityHeaders();
+
     if (!app.Environment.IsDevelopment())
     {
         app.UseExceptionHandler("/Error", createScopeForErrors: true);
@@ -120,7 +107,8 @@ try
 
     app.MapStaticAssets();
     app.MapPost("/account/login", LoginAsync);
-    app.MapGet("/account/logout", LogoutAsync);
+    // Выход только по POST с antiforgery-током — защита от logout-CSRF
+    app.MapPost("/account/logout", LogoutAsync);
     app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
     app.Run();
@@ -156,7 +144,7 @@ static async Task<IResult> LoginAsync(
         catch (AntiforgeryValidationException ex)
         {
             Log.Warning(ex, "Неверный antiforgery-токен при входе. Class={Class}, Method={Method}", className, method);
-            return Results.Redirect("/?error=invalid");
+            return Results.Redirect("/entry?error=invalid");
         }
 
         IFormCollection form = await context.Request.ReadFormAsync();
@@ -173,15 +161,15 @@ static async Task<IResult> LoginAsync(
             Log.Warning(
                 "Попытка входа во время блокировки. Ip={Ip}, User={User}, RemainSec={Sec}. Class={Class}, Method={Method}",
                 clientIp, userKey, remainBefore, className, method);
-            return Results.Redirect($"/?error=locked&retry={remainBefore}");
+            return Results.Redirect($"/entry?error=locked&retry={remainBefore}");
         }
 
         if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null)
         {
             int lockedSec = loginGuard.RecordFailure(clientIp, userKey);
             if (lockedSec > 0)
-                return Results.Redirect($"/?error=locked&retry={lockedSec}");
-            return Results.Redirect("/?error=invalid");
+                return Results.Redirect($"/entry?error=locked&retry={lockedSec}");
+            return Results.Redirect("/entry?error=invalid");
         }
 
         bool isValid = Data.Domain.ValidateAdCredentials(username.Trim(), password);
@@ -193,8 +181,8 @@ static async Task<IResult> LoginAsync(
                 clientIp, userKey, lockedSec, className, method);
 
             if (lockedSec > 0)
-                return Results.Redirect($"/?error=locked&retry={lockedSec}");
-            return Results.Redirect("/?error=invalid");
+                return Results.Redirect($"/entry?error=locked&retry={lockedSec}");
+            return Results.Redirect("/entry?error=invalid");
         }
 
         loginGuard.RecordSuccess(clientIp, userKey);
@@ -226,25 +214,40 @@ static async Task<IResult> LoginAsync(
     catch (Exception ex)
     {
         Log.Error(ex, "Исключение в {Class}.{Method}", className, method);
-        return Results.Redirect("/?error=server");
+        return Results.Redirect("/entry?error=server");
     }
 }
 
 /// <summary>
-/// Обработчик GET /account/logout — выход и очистка cookie.
+/// Обработчик POST /account/logout — CSRF-проверка, выход и очистка cookie.
+/// Выход выполняется только POST-запросом с валидным antiforgery-током —
+/// защита от logout-CSRF (автоматический GET-запрос со стороннего сайта).
 /// </summary>
-static async Task<IResult> LogoutAsync(HttpContext context)
+static async Task<IResult> LogoutAsync(
+    HttpContext context,
+    IAntiforgery antiforgery)
 {
     const string className = "WebShelf.Program";
     const string method = nameof(LogoutAsync);
 
     try
     {
+        // --- CSRF ---
+        try
+        {
+            await antiforgery.ValidateRequestAsync(context);
+        }
+        catch (AntiforgeryValidationException ex)
+        {
+            Log.Warning(ex, "Неверный antiforgery-токен при выходе. Class={Class}, Method={Method}", className, method);
+            return Results.BadRequest();
+        }
+
         await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         Log.Information("Выход выполнен. Class={Class}, Method={Method}", className, method);
 
         // Fetch (XHR) с redirect:manual — 204, cookie уже сброшен, клиент сам идёт на /entry.
-        // Обычный переход браузера — 302 на /entry.
+        // Обычный POST-переход браузера — 302 на /entry.
         string accept = context.Request.Headers.Accept.ToString();
         bool isFetch = accept.Contains("application/json", StringComparison.OrdinalIgnoreCase)
                        || string.Equals(context.Request.Headers["X-Requested-With"], "XMLHttpRequest", StringComparison.OrdinalIgnoreCase)
@@ -261,5 +264,38 @@ static async Task<IResult> LogoutAsync(HttpContext context)
     {
         Log.Error(ex, "Исключение в {Class}.{Method}", className, method);
         return Results.Redirect("/entry");
+    }
+}
+
+/// <summary>
+/// Применяет единую настройку Serilog: уровни, overrides, enrichers и sinks.
+/// Используется и для раннего bootstrap-логгера, и для логгера хоста.
+/// </summary>
+static LoggerConfiguration ApplySerilogDefaults(LoggerConfiguration configuration)
+{
+    const string className = "WebShelf.Program";
+    const string method = nameof(ApplySerilogDefaults);
+
+    try
+    {
+        return configuration
+            .MinimumLevel.Information()
+            .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+            .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
+            .Enrich.FromLogContext()
+            .Enrich.WithEnvironmentName()
+            .Enrich.WithThreadId()
+            .WriteTo.Debug()
+            .WriteTo.File(
+                path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: 30,
+                shared: true,
+                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}");
+    }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "Исключение в {Class}.{Method}", className, method);
+        throw;
     }
 }

@@ -55,27 +55,36 @@ internal class Domain
     private readonly string _encryptedPassword;
 
     /// <summary>
+    /// GUID системы WebShelf (хранится в атрибуте info пользователей AD).
+    /// </summary>
+    private readonly string _systemGuid;
+
+    /// <summary>
     /// Создаёт экземпляр класса <see cref="Domain"/>.
     /// Параметры <paramref name="encryptedUser"/> и <paramref name="encryptedPassword"/>
     /// должны быть уже зашифрованы мастер-ключом (<see cref="EncryptionService"/>).
     /// Перед проверками значения расшифровываются; в поля сохраняются зашифрованные данные.
+    /// GUID системы передаётся явно — класс не обращается к статическому хранилищу <c>Data</c>.
     /// </summary>
     /// <param name="domain">Имя домена (FQDN).</param>
     /// <param name="encryptedUser">Зашифрованное имя сервисной учётной записи (Base64).</param>
     /// <param name="encryptedPassword">Зашифрованный пароль сервисной учётной записи (Base64).</param>
+    /// <param name="guid">GUID системы WebShelf (ищется в атрибуте info пользователей AD).</param>
     /// <exception cref="ArgumentException">
-    /// Возникает, если имя домена пустое, либо после расшифровки логин/пароль пустые
+    /// Возникает, если имя домена или GUID пустые, либо после расшифровки логин/пароль пустые
     /// или логин не удаётся привести к формату username@domain.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Возникает, если мастер-ключ недоступен или расшифровка не удалась.
     /// </exception>
-    internal Domain(string domain, string encryptedUser, string encryptedPassword)
+    internal Domain(string domain, string encryptedUser, string encryptedPassword, string guid)
     {
         const string method = ".ctor";
 
         if (string.IsNullOrWhiteSpace(domain))
             throw new ArgumentException("Имя домена не может быть пустым.", nameof(domain));
+        if (string.IsNullOrWhiteSpace(guid))
+            throw new ArgumentException("GUID системы не может быть пустым.", nameof(guid));
         if (string.IsNullOrWhiteSpace(encryptedUser))
             throw new ArgumentException("Зашифрованное имя пользователя не может быть пустым.", nameof(encryptedUser));
         if (string.IsNullOrWhiteSpace(encryptedPassword))
@@ -116,6 +125,7 @@ internal class Domain
             throw new ArgumentException($"Имя пользователя '{plainUser}' не удалось привести к формату username@domain.", nameof(encryptedUser));
 
         Name = domain.Trim();
+        _systemGuid = guid.Trim();
 
         // Перед записью в поля — шифруем (нормализованный логин и пароль)
         try
@@ -210,7 +220,7 @@ internal class Domain
     /// Возвращает список пользователей Active Directory, разрешённых для работы в WebShelf.
     /// Пользователь считается разрешённым, если:
     /// - учётная запись включена;
-    /// - в атрибуте <c>info</c> указан GUID системы (<see cref="Service.Data.GUID"/>).
+    /// - в атрибуте <c>info</c> указан GUID системы WebShelf.
     /// Поиск выполняется на стороне контроллера домена с постраничной выборкой.
     /// Загружаются только атрибуты sAMAccountName, displayName и mail.
     /// </summary>
@@ -247,7 +257,7 @@ internal class Domain
                 // Фильтр: пользователь, включённая учётная запись, нужный GUID в поле info
                 Filter = $"(&(objectCategory=person)(objectClass=user)" +
                          $"(!(userAccountControl:1.2.840.113556.1.4.803:=2))" +
-                         $"(info=*GUID|{Service.Data.GUID}*))",
+                         $"(info=*GUID|{_systemGuid}*))",
                 PageSize = 1000,
                 SearchScope = SearchScope.Subtree
             };
@@ -315,7 +325,7 @@ internal class Domain
     /// <summary>
     /// Проверяет учётные данные пользователя в Active Directory.
     /// При <paramref name="guid"/> = <see langword="true"/> дополнительно проверяет,
-    /// что в атрибуте <c>info</c> пользователя указан GUID системы (<see cref="Service.Data.GUID"/>).
+    /// что в атрибуте <c>info</c> пользователя указан GUID системы WebShelf.
     /// Параметры <paramref name="username"/> и <paramref name="password"/> передаются в открытом виде
     /// (как ввёл пользователь или как подготовлены при старте сервиса).
     /// </summary>
@@ -333,7 +343,7 @@ internal class Domain
             return false;
         }
 
-        string normalizedUser = (NormalizeUserName(username) ?? string.Empty).Trim();
+        string normalizedUser = (NormalizeUserName(username, Name) ?? string.Empty).Trim();
         // В логах не светим реальные имена учётных записей
         string accountLabel = guid ? "UserAccount" : "SystemAccount";
 
@@ -343,10 +353,15 @@ internal class Domain
                 "Начало проверки учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}, CheckGuid={CheckGuid}",
                 ClassName, method, Name, accountLabel, guid);
 
-            // Проверка логина/пароля (контекст без сервисной учётки)
+            // Проверка логина/пароля (контекст без сервисной учётки).
+            // Signing + Sealing: подпись и шифрование LDAP-канала —
+            // защита от перехвата учётных данных при NTLM-fallback.
             using (PrincipalContext authContext = new(ContextType.Domain, Name))
             {
-                if (!authContext.ValidateCredentials(normalizedUser, password, ContextOptions.Negotiate))
+                if (!authContext.ValidateCredentials(
+                        normalizedUser,
+                        password,
+                        ContextOptions.Negotiate | ContextOptions.Signing | ContextOptions.Sealing))
                 {
                     Log.Warning(
                         "Неверные учётные данные. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
@@ -364,8 +379,8 @@ internal class Domain
                 return true;
             }
 
-            // GUID системы должен быть задан
-            if (string.IsNullOrWhiteSpace(Service.Data.GUID))
+            // GUID системы должен быть задан (гарантируется конструктором)
+            if (string.IsNullOrWhiteSpace(_systemGuid))
             {
                 Log.Error(
                     "GUID системы не задан. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
@@ -407,7 +422,7 @@ internal class Domain
             object? infoValue = entry.Properties["info"]?.Value;
             string info = infoValue?.ToString() ?? string.Empty;
 
-            bool allowed = info.Contains($"GUID|{Service.Data.GUID}", StringComparison.OrdinalIgnoreCase);
+            bool allowed = info.Contains($"GUID|{_systemGuid}", StringComparison.OrdinalIgnoreCase);
 
             if (allowed)
             {
@@ -457,8 +472,9 @@ internal class Domain
 
     /// <summary>
     /// Приводит имя пользователя к формату <c>username@domainname</c>.
+    /// Имя домена передаётся явно — класс не зависит от статического хранилища Data.
     /// </summary>
-    public static string? NormalizeUserName(string userName, string? domainName = null)
+    internal static string? NormalizeUserName(string userName, string domainName)
     {
         const string method = nameof(NormalizeUserName);
 
@@ -470,7 +486,7 @@ internal class Domain
                 return null;
             }
 
-            string domain = (domainName ?? Data.Domain?.Name ?? string.Empty).Trim();
+            string domain = domainName.Trim();
             if (domain.Length == 0)
             {
                 WarnInvalid("Не задано имя домена.");

@@ -1,4 +1,10 @@
-﻿<!DOCTYPE html>
+﻿@using Microsoft.AspNetCore.Antiforgery
+@using Microsoft.AspNetCore.Http
+@using Serilog
+@inject IAntiforgery Antiforgery
+@inject IHttpContextAccessor HttpContextAccessor
+
+<!DOCTYPE html>
 <html lang="ru">
 
 <head>
@@ -10,6 +16,8 @@
     <link rel="stylesheet" href="@Assets["css/window.css"]" />
     <link rel="stylesheet" href="@Assets["css/ribbon.css"]" />
     <link rel="stylesheet" href="@Assets["WebShelf.styles.css"]" />
+    @* Antiforgery-токен для JS-запросов (logout): считывается в ribbon.js *@
+    <meta name="ws-antiforgery-token" content="@antiforgeryToken" />
     <ImportMap />
     <HeadOutlet />
 </head>
@@ -23,3 +31,37 @@
 </body>
 
 </html>
+
+@code {
+    private const string ClassName = "WebShelf.Components.App";
+
+    /// <summary>
+    /// Antiforgery-токен текущего запроса; доступен JS через meta-тег
+    /// ws-antiforgery-token (используется при выходе).
+    /// </summary>
+    private string antiforgeryToken = string.Empty;
+
+    /// <summary>
+    /// Корневой компонент рендерится в рамках HTTP-запроса:
+    /// генерирует antiforgery-токен и сохраняет его (cookie + meta-тег).
+    /// </summary>
+    protected override void OnInitialized()
+    {
+        const string method = nameof(OnInitialized);
+
+        try
+        {
+            HttpContext? http = HttpContextAccessor.HttpContext;
+
+            if (http is not null)
+            {
+                AntiforgeryTokenSet tokens = Antiforgery.GetAndStoreTokens(http);
+                antiforgeryToken = tokens.RequestToken ?? string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Не удалось получить antiforgery-токен. Class={Class}, Method={Method}", ClassName, method);
+        }
+    }
+}
