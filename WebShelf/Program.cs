@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.DataProtection;
 using System.Security.Claims;
 using Serilog.Events;
+using WebShelf.Classes.DC;
 using WebShelf.Classes.Service;
 using WebShelf.Components;
 
@@ -41,6 +43,23 @@ try
         "Прослушивание {ListenUrl} (Server.conf). Class={Class}, Method={Method}",
         listenUrl, "WebShelf.Program", "Main");
 
+    #region Постоянное хранение ключей Data Protection
+    // Ключи Data Protection шифруют билет аутентификационной куки и antiforgery-токены.
+    // Без явной настройки при работе службы они могут храниться эфемерно — после
+    // рестарта все сессии и токены становятся недействительными (выход всех пользователей).
+    // Хранение — рядом с бинарниками (как и логи), защита — DPAPI текущей учётной
+    // записи службы: файлы ключей бесполезны при копировании под другой учёткой.
+    string keysPath = Path.Combine(AppContext.BaseDirectory, "keys");
+    Directory.CreateDirectory(keysPath);
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(keysPath))
+        .ProtectKeysWithDpapi();
+
+    Log.Information(
+        "Data Protection keys: {KeysPath}. Class={Class}, Method={Method}",
+        keysPath, "WebShelf.Program", "Main");
+    #endregion
+
     #region Аутентификация через куки
     bool preferSecure = string.Equals(Data.Scheme, "https", StringComparison.OrdinalIgnoreCase);
 
@@ -50,7 +69,13 @@ try
             options.LoginPath = "/entry";
             options.AccessDeniedPath = "/entry";
             options.ExpireTimeSpan = TimeSpan.FromHours(8);
-            options.SlidingExpiration = true;
+            // Скользящее обновление отключено: при SlidingExpiration=true продление
+            // перезаписывает ExpiresUtc билета значением ExpireTimeSpan (8 часов),
+            // из-за чего «Запомнить меня» на 14 дней вырождалась в скользящую
+            // 8-часовую сессию. Срок жизни билета теперь фиксируется один раз
+            // в AuthenticationProperties при входе (см. LoginAsync):
+            // rememberMe — 14 календарных дней, обычная сессия — 8 часов.
+            options.SlidingExpiration = false;
             options.Cookie.Name = "WebShelf.Auth";
             options.Cookie.HttpOnly = true;
             options.Cookie.SecurePolicy = preferSecure
@@ -153,32 +178,45 @@ static async Task<IResult> LoginAsync(
         bool rememberMe = form["rememberMe"] == "true";
 
         string clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        string userKey = string.IsNullOrWhiteSpace(username) ? string.Empty : username.Trim();
+
+        // Канонизация имени до обращения к LoginGuard: 'ivanov', 'DOMAIN\ivanov' и
+        // 'ivanov@domain' должны попадать в один и тот же ключ учёта попыток.
+        // Без канонизации перебор форматов имени обходит per-account блокировку:
+        // каждый формат заводит в LoginGuard отдельный счётчик.
+        // Доменная часть известна только после загрузки конфигурации (Data.Domain),
+        // поэтому при её отсутствии канонизация невозможна — передаётся null и
+        // попытки учитываются только по IP-ключу.
+        string? userKey = string.IsNullOrWhiteSpace(username) || Data.Domain is null
+            ? null
+            : Domain.NormalizeUserName(username, Data.Domain.Name);
 
         // --- Brute-force: уже заблокирован? ---
         if (loginGuard.IsLocked(clientIp, userKey, out int remainBefore))
         {
             Log.Warning(
-                "Попытка входа во время блокировки. Ip={Ip}, User={User}, RemainSec={Sec}. Class={Class}, Method={Method}",
-                clientIp, userKey, remainBefore, className, method);
+                "Попытка входа во время блокировки. Ip={Ip}, RemainSec={Sec}. Class={Class}, Method={Method}",
+                clientIp, remainBefore, className, method);
             return Results.Redirect($"/entry?error=locked&retry={remainBefore}");
         }
 
-        if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null)
+        // userKey == null при непустом имени — формат не распознан (нет домена или
+        // некорректный ввод): AD-проверка всё равно бы не прошла, фиксируем как отказ.
+        if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null || userKey is null)
         {
-            int lockedSec = loginGuard.RecordFailure(clientIp, userKey);
+            int lockedSec = loginGuard.RecordFailure(clientIp, null);
             if (lockedSec > 0)
                 return Results.Redirect($"/entry?error=locked&retry={lockedSec}");
             return Results.Redirect("/entry?error=invalid");
         }
 
-        bool isValid = Data.Domain.ValidateAdCredentials(username.Trim(), password);
+        bool isValid = Data.Domain.ValidateAdCredentials(userKey, password);
         if (!isValid)
         {
             int lockedSec = loginGuard.RecordFailure(clientIp, userKey);
+            // Реальное имя учётной записи в лог не попадает
             Log.Warning(
-                "Неудачная попытка входа. Ip={Ip}, User={User}, LockedSec={Sec}. Class={Class}, Method={Method}",
-                clientIp, userKey, lockedSec, className, method);
+                "Неудачная попытка входа. Ip={Ip}, LockedSec={Sec}. Class={Class}, Method={Method}",
+                clientIp, lockedSec, className, method);
 
             if (lockedSec > 0)
                 return Results.Redirect($"/entry?error=locked&retry={lockedSec}");
@@ -187,10 +225,14 @@ static async Task<IResult> LoginAsync(
 
         loginGuard.RecordSuccess(clientIp, userKey);
 
+        // В claims уходит канонический sAMAccountName без доменной части —
+        // независимо от того, в каком формате пользователь ввёл логин.
+        string samAccountName = userKey[..userKey.IndexOf('@')];
+
         List<Claim> claims = new List<Claim>
         {
-            new(ClaimTypes.Name, username.Trim()),
-            new(ClaimTypes.NameIdentifier, username.Trim())
+            new(ClaimTypes.Name, samAccountName),
+            new(ClaimTypes.NameIdentifier, samAccountName)
         };
 
         ClaimsIdentity identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
