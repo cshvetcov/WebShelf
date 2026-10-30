@@ -39,6 +39,9 @@ internal static class EncryptionService
     /// <summary>Имя значения реестра с защищённым мастер-ключом.</summary>
     private const string RegistryValueName = "MasterKey";
 
+    /// <summary>Имя значения реестра с защищённым InstanceId (ULID).</summary>
+    private const string RegistryInstanceIdValueName = "InstanceId";
+
     /// <summary>Всегда CurrentUser: ключ привязан к identity процесса.</summary>
     private const DataProtectionScope ProtectionScope = DataProtectionScope.CurrentUser;
 
@@ -116,6 +119,176 @@ internal static class EncryptionService
         {
             Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
             throw;
+        }
+    }
+
+    #endregion
+
+    #region InstanceId (HKCU + DPAPI CurrentUser)
+
+    /// <summary>
+    /// Обеспечивает наличие InstanceId: читает из <c>HKEY_CURRENT_USER</c> (DPAPI CurrentUser),
+    /// при отсутствии генерирует ULID, защищает DPAPI и записывает.
+    /// Существующие данные никогда не удаляются. При невозможности прочитать
+    /// повреждённые данные возвращает <see langword="null"/> (вызов должен аварийно завершиться).
+    /// </summary>
+    /// <returns>Полный ULID (26 символов) или <see langword="null"/> при ошибке.</returns>
+    internal static string? EnsureInstanceId()
+    {
+        const string method = nameof(EnsureInstanceId);
+
+        try
+        {
+            lock (RegistrySync)
+            {
+                byte[]? storedProtected = TryReadProtectedInstanceIdFromRegistry();
+                if (storedProtected is not null)
+                {
+                    try
+                    {
+                        byte[] unprotected = ProtectedData.Unprotect(
+                            storedProtected, optionalEntropy: null, ProtectionScope);
+                        try
+                        {
+                            string id = Encoding.UTF8.GetString(unprotected).Trim();
+                            if (!IsValidUlidString(id))
+                            {
+                                Log.Error(
+                                    "InstanceId в реестре имеет некорректный формат. Length={Length}. Class={Class}, Method={Method}",
+                                    id.Length, ClassName, method);
+                                return null;
+                            }
+
+                            Log.Information(
+                                "InstanceId прочитан из HKCU. Class={Class}, Method={Method}",
+                                ClassName, method);
+                            return id;
+                        }
+                        finally
+                        {
+                            ClearKeyMaterial(unprotected);
+                        }
+                    }
+                    catch (CryptographicException ex)
+                    {
+                        Log.Error(ex,
+                            "Не удалось расшифровать InstanceId из реестра (DPAPI). Данные не удаляются. Class={Class}, Method={Method}",
+                            ClassName, method);
+                        return null;
+                    }
+                    finally
+                    {
+                        ClearKeyMaterial(storedProtected);
+                    }
+                }
+
+                string newId = Ulid.NewUlid().ToString();
+                byte[] plainBytes = Encoding.UTF8.GetBytes(newId);
+                try
+                {
+                    byte[] protectedBlob = ProtectedData.Protect(
+                        plainBytes, optionalEntropy: null, ProtectionScope);
+                    try
+                    {
+                        if (!TryWriteProtectedInstanceIdToRegistry(protectedBlob))
+                        {
+                            Log.Error(
+                                "Не удалось записать InstanceId в HKCU. Class={Class}, Method={Method}",
+                                ClassName, method);
+                            return null;
+                        }
+                    }
+                    finally
+                    {
+                        ClearKeyMaterial(protectedBlob);
+                    }
+
+                    Log.Information(
+                        "InstanceId сгенерирован и сохранён в HKCU. Class={Class}, Method={Method}",
+                        ClassName, method);
+                    return newId;
+                }
+                finally
+                {
+                    ClearKeyMaterial(plainBytes);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Проверяет строку ULID: 26 символов Crockford Base32.
+    /// </summary>
+    private static bool IsValidUlidString(string value)
+    {
+        if (value.Length != 26)
+            return false;
+
+        foreach (char c in value)
+        {
+            bool ok = (c >= '0' && c <= '9')
+                      || (c >= 'A' && c <= 'Z')
+                      || (c >= 'a' && c <= 'z');
+            if (!ok)
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Читает защищённый блоб InstanceId из <c>HKEY_CURRENT_USER</c>.
+    /// </summary>
+    private static byte[]? TryReadProtectedInstanceIdFromRegistry()
+    {
+        const string method = nameof(TryReadProtectedInstanceIdFromRegistry);
+
+        try
+        {
+            using RegistryKey? subKey = Registry.CurrentUser.OpenSubKey(RegistryKeyPath, writable: false);
+            if (subKey is null)
+                return null;
+
+            object? value = subKey.GetValue(RegistryInstanceIdValueName);
+            if (value is not byte[] blob || blob.Length == 0)
+                return null;
+
+            return (byte[])blob.Clone();
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex,
+                "Ошибка чтения InstanceId из HKCU. Class={Class}, Method={Method}",
+                ClassName, method);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Записывает защищённый блоб InstanceId в <c>HKEY_CURRENT_USER</c>.
+    /// Существующие значения не удаляются — только дописывается/обновляется InstanceId.
+    /// </summary>
+    private static bool TryWriteProtectedInstanceIdToRegistry(byte[] protectedBlob)
+    {
+        const string method = nameof(TryWriteProtectedInstanceIdToRegistry);
+
+        try
+        {
+            using RegistryKey subKey = Registry.CurrentUser.CreateSubKey(RegistryKeyPath, writable: true);
+            subKey.SetValue(RegistryInstanceIdValueName, protectedBlob, RegistryValueKind.Binary);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex,
+                "Ошибка записи InstanceId в HKCU. Class={Class}, Method={Method}",
+                ClassName, method);
+            return false;
         }
     }
 

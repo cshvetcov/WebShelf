@@ -55,36 +55,29 @@ internal class Domain
     private readonly string _encryptedPassword;
 
     /// <summary>
-    /// GUID системы WebShelf (хранится в атрибуте info пользователей AD).
-    /// </summary>
-    private readonly string _systemGuid;
-
-    /// <summary>
     /// Создаёт экземпляр класса <see cref="Domain"/>.
     /// Параметры <paramref name="encryptedUser"/> и <paramref name="encryptedPassword"/>
     /// должны быть уже зашифрованы мастер-ключом (<see cref="EncryptionService"/>).
     /// Перед проверками значения расшифровываются; в поля сохраняются зашифрованные данные.
-    /// GUID системы передаётся явно — класс не обращается к статическому хранилищу <c>Data</c>.
+    /// Принадлежность пользователя к WebShelf проверяется через членство в AD-группе
+    /// <c>WebShelf-{InstanceIdShort}-Users</c>.
     /// </summary>
     /// <param name="domain">Имя домена (FQDN).</param>
     /// <param name="encryptedUser">Зашифрованное имя сервисной учётной записи (Base64).</param>
     /// <param name="encryptedPassword">Зашифрованный пароль сервисной учётной записи (Base64).</param>
-    /// <param name="guid">GUID системы WebShelf (ищется в атрибуте info пользователей AD).</param>
     /// <exception cref="ArgumentException">
-    /// Возникает, если имя домена или GUID пустые, либо после расшифровки логин/пароль пустые
+    /// Возникает, если имя домена пустое, либо после расшифровки логин/пароль пустые
     /// или логин не удаётся привести к формату username@domain.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Возникает, если мастер-ключ недоступен или расшифровка не удалась.
     /// </exception>
-    internal Domain(string domain, string encryptedUser, string encryptedPassword, string guid)
+    internal Domain(string domain, string encryptedUser, string encryptedPassword)
     {
         const string method = ".ctor";
 
         if (string.IsNullOrWhiteSpace(domain))
             throw new ArgumentException("Имя домена не может быть пустым.", nameof(domain));
-        if (string.IsNullOrWhiteSpace(guid))
-            throw new ArgumentException("GUID системы не может быть пустым.", nameof(guid));
         if (string.IsNullOrWhiteSpace(encryptedUser))
             throw new ArgumentException("Зашифрованное имя пользователя не может быть пустым.", nameof(encryptedUser));
         if (string.IsNullOrWhiteSpace(encryptedPassword))
@@ -125,7 +118,6 @@ internal class Domain
             throw new ArgumentException($"Имя пользователя '{plainUser}' не удалось привести к формату username@domain.", nameof(encryptedUser));
 
         Name = domain.Trim();
-        _systemGuid = guid.Trim();
 
         // Перед записью в поля — шифруем (нормализованный логин и пароль)
         try
@@ -220,7 +212,7 @@ internal class Domain
     /// Возвращает список пользователей Active Directory, разрешённых для работы в WebShelf.
     /// Пользователь считается разрешённым, если:
     /// - учётная запись включена;
-    /// - в атрибуте <c>info</c> указан GUID системы WebShelf.
+    /// - состоит в группе <c>WebShelf-{InstanceIdShort}-Users</c>.
     /// Поиск выполняется на стороне контроллера домена с постраничной выборкой.
     /// Загружаются только атрибуты sAMAccountName, displayName и mail.
     /// </summary>
@@ -252,12 +244,14 @@ internal class Domain
                 serviceUser,
                 servicePassword,
                 AuthenticationTypes.Secure);
+
+            string usersGroup = $"WebShelf-{Data.InstanceIdShort}-Users";
             using DirectorySearcher searcher = new(searchRoot)
             {
-                // Фильтр: пользователь, включённая учётная запись, нужный GUID в поле info
-                Filter = $"(&(objectCategory=person)(objectClass=user)" +
-                         $"(!(userAccountControl:1.2.840.113556.1.4.803:=2))" +
-                         $"(info=*GUID|{_systemGuid}*))",
+                Filter =
+                    $"(&(objectCategory=person)(objectClass=user)" +
+                    $"(!(userAccountControl:1.2.840.113556.1.4.803:=2))" +
+                    $"(memberOf=*CN={usersGroup}*))",
                 PageSize = 1000,
                 SearchScope = SearchScope.Subtree
             };
@@ -324,12 +318,12 @@ internal class Domain
 
     /// <summary>
     /// Проверяет учётные данные пользователя в Active Directory.
-    /// При <paramref name="guid"/> = <see langword="true"/> дополнительно проверяет,
-    /// что в атрибуте <c>info</c> пользователя указан GUID системы WebShelf.
+    /// При <paramref name="checkUsersGroup"/> = <see langword="true"/> дополнительно проверяет
+    /// членство в группе <c>WebShelf-{InstanceIdShort}-Users</c>.
     /// Параметры <paramref name="username"/> и <paramref name="password"/> передаются в открытом виде
     /// (как ввёл пользователь или как подготовлены при старте сервиса).
     /// </summary>
-    internal bool ValidateAdCredentials(string username, string password, bool guid = true)
+    internal bool ValidateAdCredentials(string username, string password, bool checkUsersGroup = true)
     {
         const string method = nameof(ValidateAdCredentials);
 
@@ -345,13 +339,13 @@ internal class Domain
 
         string normalizedUser = (NormalizeUserName(username, Name) ?? string.Empty).Trim();
         // В логах не светим реальные имена учётных записей
-        string accountLabel = guid ? "UserAccount" : "SystemAccount";
+        string accountLabel = checkUsersGroup ? "UserAccount" : "SystemAccount";
 
         try
         {
             Log.Debug(
-                "Начало проверки учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}, CheckGuid={CheckGuid}",
-                ClassName, method, Name, accountLabel, guid);
+                "Начало проверки учётных данных. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}, CheckUsersGroup={CheckUsersGroup}",
+                ClassName, method, Name, accountLabel, checkUsersGroup);
 
             // Проверка логина/пароля (контекст без сервисной учётки).
             // Signing + Sealing: подпись и шифрование LDAP-канала —
@@ -370,25 +364,16 @@ internal class Domain
                 }
             }
 
-            // Без проверки GUID — достаточно валидных учётных данных
-            if (!guid)
+            // Без проверки группы — достаточно валидных учётных данных (сервисная учётка)
+            if (!checkUsersGroup)
             {
                 Log.Information(
-                    "Учётные данные подтверждены (без проверки GUID). Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                    "Учётные данные подтверждены (без проверки группы Users). Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
                     ClassName, method, Name, accountLabel);
                 return true;
             }
 
-            // GUID системы должен быть задан (гарантируется конструктором)
-            if (string.IsNullOrWhiteSpace(_systemGuid))
-            {
-                Log.Error(
-                    "GUID системы не задан. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                    ClassName, method, Name, accountLabel);
-                return false;
-            }
-
-            // Для чтения атрибута info используем сервисную учётную запись (расшифрованную)
+            string usersGroupName = $"WebShelf-{Data.InstanceIdShort}-Users";
             string serviceUser = GetDecryptedUser();
             string servicePassword = GetDecryptedPassword();
 
@@ -409,32 +394,31 @@ internal class Domain
                 return false;
             }
 
-            // DirectoryEntry принадлежит UserPrincipal — отдельно не освобождаем
-            if (user.GetUnderlyingObject() is not DirectoryEntry entry)
+            using GroupPrincipal? group =
+                GroupPrincipal.FindByIdentity(context, IdentityType.SamAccountName, usersGroupName) ??
+                GroupPrincipal.FindByIdentity(context, IdentityType.Name, usersGroupName);
+
+            if (group is null)
             {
-                Log.Warning(
-                    "Не удалось получить DirectoryEntry для пользователя. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                    ClassName, method, Name, accountLabel);
+                Log.Error(
+                    "Группа {Group} не найдена в AD. Class={Class}, Method={Method}, Domain={Domain}",
+                    usersGroupName, ClassName, method, Name);
                 return false;
             }
 
-            entry.RefreshCache(["info"]);
-            object? infoValue = entry.Properties["info"]?.Value;
-            string info = infoValue?.ToString() ?? string.Empty;
-
-            bool allowed = info.Contains($"GUID|{_systemGuid}", StringComparison.OrdinalIgnoreCase);
+            bool allowed = user.IsMemberOf(group);
 
             if (allowed)
             {
                 Log.Information(
-                    "Учётные данные и GUID подтверждены. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                    "Учётные данные и членство в группе Users подтверждены. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
                     ClassName, method, Name, accountLabel);
             }
             else
             {
                 Log.Warning(
-                    "Пользователь не разрешён для WebShelf (GUID не найден в info). Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
-                    ClassName, method, Name, accountLabel);
+                    "Пользователь не состоит в группе {Group}. Class={Class}, Method={Method}, Domain={Domain}, Username={Username}",
+                    usersGroupName, ClassName, method, Name, accountLabel);
             }
 
             return allowed;

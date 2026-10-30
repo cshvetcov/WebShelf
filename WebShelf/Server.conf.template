@@ -7,11 +7,6 @@ scheme=https
 # port: порт, на котором слушает приложение (1–65535)
 port=
 
-### Идентификатор ActiveDirectory
-# GUID (Globally Unique Identifier) домена используемый для идентификации объектов ActiveDirectory
-# как пренадлежащих к WebShelf.
-guid=
-
 ### Настройки для управления доменом
 # Имя домена ActiveDirectory (например, mydomain.local)
 domainname=
@@ -19,7 +14,26 @@ domainname=
 domainuser=
 # Пароль от серверной учетной записи, которая имеет права на чтение и запись в ActiveDirectory
 domainpass=
-# Имя серверной учетной записи, которая имеет права на чтение и запись в ActiveDirectory зашифрованное мастер ключом (заполняется автоматически)
+# Имя серверной учетной записи, зашифрованное мастер-ключом (заполняется автоматически)
 sdomainuser=
-# Пароль от серверной учетной записи, которая имеет права на чтение и запись в ActiveDirectory зашифрованное мастер ключом (заполняется автоматически)
+# Пароль серверной учетной записи, зашифрованный мастер-ключом (заполняется автоматически)
 sdomainpass=
+
+### Примечание
+# InstanceId (ULID) генерируется автоматически при первом запуске и хранится в
+# HKEY_CURRENT_USER\Software\WebShelf\Encryption (значение InstanceId) под защитой DPAPI.
+# Пользователи WebShelf должны состоять в группе AD:
+#   WebShelf-{12 символов InstanceId в нижнем регистре}-Users
+# Ролевые группы (пример):
+#   WebShelf-{id}-Administrator
+#   WebShelf-{id}-Director
+#   WebShelf-{id}-BIMManager
+#   WebShelf-{id}-Manager
+#   WebShelf-{id}-GIP
+#   WebShelf-{id}-GroupLeader
+#   WebShelf-{id}-Executor
+#   WebShelf-{id}-ExternalExecutor
+#   WebShelf-{id}-Customer
+#   WebShelf-{id}-Guest
+# Группы на данном этапе создаёт системный администратор вручную.
+# Текущий InstanceIdShort смотрите в логе при старте приложения.

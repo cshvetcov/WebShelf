@@ -16,9 +16,32 @@ try
 {
     Log.Information("WebShelf запускается...");
 
+    // Один экземпляр на учётную запись Windows
+    if (!InstanceLock.TryAcquire())
+    {
+        Environment.Exit(1);
+    }
+
+    // InstanceId ДО MasterKey и конфигурации
+    string? instanceId = EncryptionService.EnsureInstanceId();
+    if (string.IsNullOrWhiteSpace(instanceId))
+    {
+        Log.Fatal(
+            "Не удалось обеспечить InstanceId (реестр/DPAPI). Приложение останавливается. Class={Class}, Method={Method}",
+            "WebShelf.Program", "Main");
+        InstanceLock.Release();
+        Environment.Exit(1);
+    }
+
+    Data.SetInstanceId(instanceId);
+    Log.Information(
+        "InstanceId готов. Short={Short}. Class={Class}, Method={Method}",
+        Data.InstanceIdShort, "WebShelf.Program", "Main");
+
     if (!Data.ReadConfig())
     {
         Log.Fatal("Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}", "WebShelf.Program", "Main");
+        InstanceLock.Release();
         Environment.Exit(1);
     }
 
@@ -145,6 +168,7 @@ catch (Exception ex)
 }
 finally
 {
+    InstanceLock.Release();
     Log.CloseAndFlush();
 }
 

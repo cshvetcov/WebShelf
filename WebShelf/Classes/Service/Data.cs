@@ -7,7 +7,7 @@ namespace WebShelf.Classes.Service;
 /// <summary>
 /// Центральное хранилище системных данных приложения WebShelf.
 /// Отвечает за чтение конфигурации (Server.conf) и предоставление
-/// экземпляра домена Active Directory, GUID системы, порта и схемы (http/https).
+/// экземпляра домена Active Directory, InstanceId, порта и схемы (http/https).
 /// </summary>
 internal static class Data
 {
@@ -38,10 +38,48 @@ internal static class Data
     internal static Domain? Domain { get; private set; }
 
     /// <summary>
-    /// GUID системы WebShelf (хранится в атрибуте info пользователей AD).
-    /// <see langword="null"/>, если не задан в конфигурации.
+    /// Полный InstanceId (ULID, 26 символов). Write-once на весь срок жизни процесса.
     /// </summary>
-    internal static string? GUID { get; private set; }
+    private static string? _instanceId;
+
+    /// <summary>
+    /// Полный InstanceId. Бросает <see cref="InvalidOperationException"/>, если ещё не инициализирован.
+    /// </summary>
+    internal static string InstanceId =>
+        _instanceId ?? throw new InvalidOperationException("InstanceId ещё не инициализирован.");
+
+    /// <summary>
+    /// 12-символьный префикс InstanceId (нижний регистр) для имён AD-групп WebShelf-{id}-*.
+    /// </summary>
+    internal static string InstanceIdShort
+    {
+        get
+        {
+            string id = InstanceId;
+            return id.Length >= 12 ? id[..12].ToLowerInvariant() : id.ToLowerInvariant();
+        }
+    }
+
+    /// <summary>
+    /// Устанавливает InstanceId один раз на весь срок жизни процесса.
+    /// Повторный вызов вызывает <see cref="InvalidOperationException"/>.
+    /// </summary>
+    /// <param name="value">Полный ULID (26 символов).</param>
+    internal static void SetInstanceId(string value)
+    {
+        const string method = nameof(SetInstanceId);
+
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException("InstanceId не может быть пустым.", nameof(value));
+
+        if (_instanceId is not null)
+            throw new InvalidOperationException("InstanceId уже установлен.");
+
+        _instanceId = value.Trim();
+        Log.Information(
+            "InstanceId установлен в Data. Short={Short}. Class={Class}, Method={Method}",
+            InstanceIdShort, ClassName, method);
+    }
 
     /// <summary>
     /// Обязательные ключи конфигурации по группам.
@@ -52,14 +90,14 @@ internal static class Data
         new(StringComparer.OrdinalIgnoreCase)
         {
             ["Domain"] = ["domainname"],
-            ["GUID"] = ["guid"],
             ["Port"] = ["port"],
             ["Scheme"] = ["scheme"]
         };
 
     /// <summary>
-    /// Читает файл Server.conf и инициализирует <see cref="Domain"/>, <see cref="GUID"/>,
+    /// Читает файл Server.conf и инициализирует <see cref="Domain"/>,
     /// <see cref="Port"/> и <see cref="Scheme"/>.
+    /// InstanceId должен быть установлен через <see cref="SetInstanceId"/> до вызова.
     /// </summary>
     /// <returns>
     /// <see langword="true"/>, если конфигурация прочитана успешно
@@ -77,9 +115,16 @@ internal static class Data
                 ClassName, method, ConfigFile);
 
             Domain = null;
-            GUID = null;
             Port = null;
             Scheme = null;
+
+            if (_instanceId is null)
+            {
+                Log.Error(
+                    "InstanceId не установлен до чтения конфигурации. Class={Class}, Method={Method}",
+                    ClassName, method);
+                return false;
+            }
 
             if (!File.Exists(ConfigFile))
             {
@@ -99,23 +144,21 @@ internal static class Data
                 return false;
             }
 
-            // GUID инициализируется первым: TryInitDomain передаёт его в конструктор Domain
-            bool guidOk = TryInitGuid(config);
             bool domainOk = TryInitDomain(config);
             bool portOk = TryInitPort(config);
             bool schemeOk = TryInitScheme(config);
 
-            if (!domainOk || !guidOk || !portOk || !schemeOk)
+            if (!domainOk || !portOk || !schemeOk)
             {
                 Log.Error(
-                    "Конфигурация загружена частично. DomainOk={DomainOk}, GuidOk={GuidOk}, PortOk={PortOk}, SchemeOk={SchemeOk}. Class={Class}, Method={Method}",
-                    domainOk, guidOk, portOk, schemeOk, ClassName, method);
+                    "Конфигурация загружена частично. DomainOk={DomainOk}, PortOk={PortOk}, SchemeOk={SchemeOk}. Class={Class}, Method={Method}",
+                    domainOk, portOk, schemeOk, ClassName, method);
                 return false;
             }
 
             Log.Information(
-                "Конфигурация успешно загружена. Domain={Domain}, GuidSet={GuidSet}, Scheme={Scheme}, Port={Port}. Class={Class}, Method={Method}",
-                Domain!.Name, !string.IsNullOrWhiteSpace(GUID), Scheme, Port, ClassName, method);
+                "Конфигурация успешно загружена. Domain={Domain}, InstanceShort={InstanceShort}, Scheme={Scheme}, Port={Port}. Class={Class}, Method={Method}",
+                Domain!.Name, InstanceIdShort, Scheme, Port, ClassName, method);
 
             return true;
         }
@@ -126,7 +169,6 @@ internal static class Data
                 ClassName, method, ConfigFile);
 
             Domain = null;
-            GUID = null;
             Port = null;
             Scheme = null;
             return false;
@@ -200,7 +242,7 @@ internal static class Data
     /// <summary>
     /// Инициализирует <see cref="Domain"/> из словаря конфигурации
     /// и проверяет доступность контроллера домена через сервисную учётную запись
-    /// (без проверки GUID).
+    /// (без проверки группы Users).
     /// <para>
     /// Если заданы <c>sdomainuser</c> и <c>sdomainpass</c> — используются они
     /// (значения уже зашифрованы мастер-ключом).
@@ -328,24 +370,15 @@ internal static class Data
                     ClassName, method);
             }
 
-            // GUID системы должен быть инициализирован до создания Domain
-            if (string.IsNullOrWhiteSpace(GUID))
-            {
-                Log.Error(
-                    "GUID системы не инициализирован при создании Domain. Class={Class}, Method={Method}",
-                    ClassName, method);
-                return false;
-            }
-
-            // В Domain передаём зашифрованные значения и GUID системы
-            Domain = new Domain(domainName, encryptedUser, encryptedPass, GUID!);
+            // В Domain передаём зашифрованные значения (принадлежность к WebShelf — через AD-группу)
+            Domain = new Domain(domainName, encryptedUser, encryptedPass);
 
             Log.Information(
                 "Домен инициализирован. Domain={Domain}, User={User}. Class={Class}, Method={Method}",
                 Domain.Name, "SystemAccount", ClassName, method);
 
-            // Проверка доступности AD: валидация сервисной учётки без учёта GUID (открытый пароль)
-            bool isAvailable = Domain.ValidateAdCredentials(plainUser, plainPass, guid: false);
+            // Проверка доступности AD: валидация сервисной учётки без проверки группы Users (открытый пароль)
+            bool isAvailable = Domain.ValidateAdCredentials(plainUser, plainPass, checkUsersGroup: false);
             if (!isAvailable)
             {
                 Log.Error(
@@ -474,93 +507,7 @@ internal static class Data
         }
     }
 
-    /// <summary>
-    /// Инициализирует <see cref="GUID"/> из словаря конфигурации.
-    /// </summary>
-    private static bool TryInitGuid(Dictionary<string, string> config)
-    {
-        const string method = nameof(TryInitGuid);
 
-        try
-        {
-            string[] keys = RequiredKeys["GUID"];
-
-            if (!keys.All(config.ContainsKey))
-            {
-                IEnumerable<string> missing = keys.Where(k => !config.ContainsKey(k));
-                Log.Error(
-                    "Отсутствуют обязательные ключи GUID: {MissingKeys}. Class={Class}, Method={Method}",
-                    string.Join(", ", missing), ClassName, method);
-                return false;
-            }
-
-            string guid = config["guid"].Trim();
-
-            if (string.IsNullOrWhiteSpace(guid))
-            {
-                Log.Error(
-                    "Значение GUID пустое. Class={Class}, Method={Method}",
-                    ClassName, method);
-                return false;
-            }
-
-            // Значение попадает в LDAP-фильтр поиска AD: допустимы только
-            // буквы, цифры и дефисы (исключение спецсимволов фильтра).
-            if (!GuidValueIsValid(guid))
-            {
-                Log.Error(
-                    "Некорректное значение guid: допустимы только буквы, цифры и дефисы (1-64 символа). GuidLength={GuidLength}. Class={Class}, Method={Method}",
-                    guid.Length, ClassName, method);
-                return false;
-            }
-
-            GUID = guid;
-
-            Log.Information(
-                "GUID системы установлен. Class={Class}, Method={Method}",
-                ClassName, method);
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex,
-                "Ошибка инициализации GUID. Class={Class}, Method={Method}",
-                ClassName, method);
-            GUID = null;
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Проверяет значение GUID: только ASCII-буквы, цифры и дефисы, длина 1-64.
-    /// Исключает спецсимволы LDAP-фильтров и прочие опасные символы.
-    /// </summary>
-    /// <param name="value">Проверяемое значение (без пробелов по краям).</param>
-    /// <returns><see langword="true"/>, если значение безопасно для использования в AD.</returns>
-    private static bool GuidValueIsValid(string value)
-    {
-        const string method = nameof(GuidValueIsValid);
-
-        try
-        {
-            if (value.Length == 0 || value.Length > 64)
-                return false;
-
-            foreach (char c in value)
-            {
-                if (!char.IsAsciiLetterOrDigit(c) && c != '-')
-                    return false;
-            }
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
-            return false;
-        }
-    }
 
     /// <summary>
     /// Читает и проверяет порт из конфигурации.
