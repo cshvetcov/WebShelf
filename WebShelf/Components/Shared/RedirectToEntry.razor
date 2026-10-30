@@ -1,0 +1,36 @@
+@* Компонент-страховка для шаблона NotAuthorized в AuthorizeRouteView.
+   В статическом рендере показывает ссылку на форму входа (навигация из Blazor
+   в статическом контексте недоступна); в интерактивном режиме сразу
+   перенаправляет на /entry полной загрузкой документа. *@
+@inject NavigationManager Navigation
+@using Serilog
+
+<h1 class="ws-visually-hidden">Требуется вход в систему</h1>
+
+<p>Для доступа к системе необходимо войти.</p>
+<p><a href="/entry">Перейти к форме входа</a></p>
+
+@code {
+    private const string ClassName = "WebShelf.Components.Shared.RedirectToEntry";
+
+    /// <summary>
+    /// Перенаправление на форму входа выполняется только в интерактивном
+    /// режиме (OnAfterRender не вызывается при статическом рендере, поэтому
+    /// в prerender пользователь просто видит ссылку — без исключений навигации).
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (firstRender)
+            {
+                Navigation.NavigateTo("/entry", forceLoad: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Не удалось перенаправить на /entry из NotAuthorized. Class={Class}, Method={Method}",
+                ClassName, nameof(OnAfterRenderAsync));
+        }
+    }
+}

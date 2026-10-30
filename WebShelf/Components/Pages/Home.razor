@@ -1,6 +1,8 @@
 ﻿@page "/"
 @rendermode InteractiveServer
+@attribute [Authorize]
 
+@using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
 @using WebShelf.Components.Shared
 @using Serilog
@@ -28,6 +30,10 @@
 
     /// <summary>
     /// Если пользователь не авторизован — редирект на Entry.
+    /// Страница также защищена атрибутом [Authorize]: неаутентифицированный
+    /// запрос документа отклоняется на уровне endpoint (302 на /entry?ReturnUrl=...)
+    /// ещё до построения circuit. Проверка ниже — вторая линия обороны:
+    /// она срабатывает, если страница отрендерилась в circuit без аутентификации.
     /// </summary>
     protected override async Task OnInitializedAsync()
     {

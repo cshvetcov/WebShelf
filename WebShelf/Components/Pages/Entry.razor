@@ -13,6 +13,7 @@
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAntiforgery Antiforgery
 @inject IHttpContextAccessor HttpContextAccessor
+@inject IJSRuntime Js
 @inject LoginGuard LoginGuard
 
 <PageTitle>Вход в систему WebShelf</PageTitle>
@@ -29,8 +30,14 @@
            MaxWidth="420px">
 
     <form method="post" action="/account/login" autocomplete="on">
-        @* CSRF-токен *@
+        @* CSRF-токен: поле обязательно. Blazor не подставляет токен автоматически
+           в <form> внутри интерактивных компонентов — без этого поля вход невозможен.
+           Значение — пара к cookie WebShelf.Antiforgery текущего запроса. *@
         <input type="hidden" name="__RequestVerificationToken" value="@antiforgeryToken" />
+
+        @* Исходный путь пользователя: заполняется из query ReturnUrl, который кладёт
+           cookie-аутентификация при [Authorize]-редиректе с защищённой страницы. *@
+        <input type="hidden" name="returnUrl" value="@returnUrl" />
 
         <div class="ws-form-group">
             <label for="username">Имя пользователя (AD)</label>
@@ -98,6 +105,14 @@
 
     private string errorMessage = string.Empty;
     private string antiforgeryToken = string.Empty;
+    private string returnUrl = string.Empty;
+
+    /// <summary>
+    /// true, если токен не удалось получить из HttpContext — тогда OnAfterRenderAsync
+    /// дочитывает его из meta-тега (страховка на случай, когда HttpContext в circuit
+    /// недоступен: поведение зависит от версии .NET и режима хостинга).
+    /// </summary>
+    private bool _tokenMissing;
 
     private bool isLocked;
     private int lockoutSeconds;
@@ -105,6 +120,9 @@
 
     /// <summary>
     /// Инициализация: если уже авторизован — на Home; иначе CSRF, ошибка из query, блокировка.
+    /// Токен получается из HttpContext текущего HTTP-запроса: при prerender это
+    /// документ-запрос, при интерактивном рендере — стартовый запрос circuit
+    /// (в .NET 10 IHttpContextAccessor в circuit не пуст, пара cookie+токен валидна).
     /// </summary>
     protected override async Task OnInitializedAsync()
     {
@@ -123,6 +141,7 @@
                 AntiforgeryTokenSet tokens = Antiforgery.GetAndStoreTokens(http);
                 antiforgeryToken = tokens.RequestToken ?? string.Empty;
             }
+            _tokenMissing = string.IsNullOrEmpty(antiforgeryToken);
 
             Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
             Dictionary<string, StringValues> query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
@@ -147,6 +166,14 @@
                 }
             }
 
+            // Исходный путь для возврата после входа: кладётся cookie-аутентификацией
+            // при [Authorize]-редиректе с защищённой страницы (см. LoginAsync в Program.cs).
+            if (query.TryGetValue("ReturnUrl", out StringValues returnUrlValues) &&
+                !string.IsNullOrEmpty(returnUrlValues))
+            {
+                returnUrl = returnUrlValues.ToString();
+            }
+
             // На случай обновления страницы во время блокировки — сверяемся с LoginGuard
             if (!isLocked)
             {
@@ -159,6 +186,43 @@
         {
             Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnInitializedAsync));
             errorMessage = "Ошибка инициализации страницы.";
+        }
+    }
+
+    /// <summary>
+    /// Страховка CSRF-токена: если OnInitializedAsync не смог получить токен
+    /// (HttpContext недоступен в circuit), читаем его из meta-тега
+    /// ws-antiforgery-token — его заполняет статический App.razor на каждый
+    /// документ-запрос, токен всегда парный к cookie браузера.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            if (!firstRender || !_tokenMissing)
+            {
+                return;
+            }
+
+            string? fromMeta = await Js.InvokeAsync<string?>("WebShelfWindow.getAntiforgeryToken");
+            if (!string.IsNullOrEmpty(fromMeta))
+            {
+                antiforgeryToken = fromMeta;
+                _tokenMissing = false;
+                StateHasChanged();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // Цепь Blazor разорвана — страница уходит.
+        }
+        catch (InvalidOperationException)
+        {
+            // Статический рендер — interop недоступен.
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
         }
     }
 

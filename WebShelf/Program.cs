@@ -275,6 +275,22 @@ static async Task<IResult> LoginAsync(
             principal,
             props);
 
+        // Возврат на исходную страницу: cookie-аутентификация при [Authorize]-редиректе
+        // кладёт исходный путь в query ReturnUrl (/entry?ReturnUrl=...), форма входа
+        // передаёт его скрытым полем. Внешние (нелокальные) адреса отбрасываются —
+        // защита от open redirect; реальное имя учётной записи в лог не попадает.
+        string? returnUrl = form["returnUrl"];
+        if (!string.IsNullOrEmpty(returnUrl) && IsLocalUrl(returnUrl))
+        {
+            Log.Information(
+                "Вход выполнен, переход по исходному пути. Class={Class}, Method={Method}",
+                className, method);
+            return Results.Redirect(returnUrl);
+        }
+
+        Log.Information(
+            "Вход выполнен. Class={Class}, Method={Method}",
+            className, method);
         return Results.Redirect("/");
     }
     catch (Exception ex)
@@ -282,6 +298,22 @@ static async Task<IResult> LoginAsync(
         Log.Error(ex, "Исключение в {Class}.{Method}", className, method);
         return Results.Redirect("/entry?error=server");
     }
+}
+
+/// <summary>
+/// Проверяет, что URL локальный (относительный путь внутри приложения).
+/// Каноническая реализация ASP.NET Core: допустимы '/', '/путь', при этом
+/// протокол-относительные '//host' и '/\host' локальными не считаются —
+/// защита от open redirect при обработке ReturnUrl.
+/// </summary>
+static bool IsLocalUrl(string? url)
+{
+    if (string.IsNullOrEmpty(url))
+    {
+        return false;
+    }
+
+    return url[0] == '/' && (url.Length == 1 || (url[1] != '/' && url[1] != '\\'));
 }
 
 /// <summary>

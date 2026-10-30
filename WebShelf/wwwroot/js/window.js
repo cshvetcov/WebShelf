@@ -260,9 +260,28 @@
         }
     }
 
+    /**
+     * Читает antiforgery-токен из meta-тега ws-antiforgery-token.
+     * Тег заполняется статическим App.razor на каждый документ-запрос,
+     * токен всегда парный к cookie WebShelf.Antiforgery браузера.
+     * Используется Entry.razor как страховка, если HttpContext недоступен
+     * в circuit (поведение зависит от версии .NET и режима хостинга).
+     * @returns {string} Токен или пустая строка, если тег не найден.
+     */
+    function getAntiforgeryToken() {
+        try {
+            const meta = document.querySelector('meta[name="ws-antiforgery-token"]');
+            return meta ? (meta.getAttribute("content") || "") : "";
+        } catch (err) {
+            console.error("[WebShelfWindow.getAntiforgeryToken]", err);
+            return "";
+        }
+    }
+
     window.WebShelfWindow = {
         init: init,
         dispose: dispose,
-        setPageBackground: setPageBackground
+        setPageBackground: setPageBackground,
+        getAntiforgeryToken: getAntiforgeryToken
     };
 })();

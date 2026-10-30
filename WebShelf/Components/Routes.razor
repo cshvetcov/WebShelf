@@ -1,6 +1,17 @@
-﻿<Router AppAssembly="typeof(Program).Assembly" NotFoundPage="typeof(Pages.NotFound)">
+﻿@using Microsoft.AspNetCore.Components.Authorization
+@using WebShelf.Components.Shared
+
+<Router AppAssembly="typeof(Program).Assembly" NotFoundPage="typeof(Pages.NotFound)">
     <Found Context="routeData">
-        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+        @* Авторизация: [Authorize] на страницах дополнительно проверяется роутером.
+           Неаутентифицированный запрос документа отклоняется ещё на уровне endpoint
+           (cookie-аутентификация даёт 302 на /entry?ReturnUrl=...); шаблон NotAuthorized —
+           страховка для case'ов, когда endpoint-проверка не сработала. *@
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
+            <NotAuthorized>
+                <RedirectToEntry />
+            </NotAuthorized>
+        </AuthorizeRouteView>
         <FocusOnNavigate RouteData="routeData" Selector="h1" />
     </Found>
 </Router>
