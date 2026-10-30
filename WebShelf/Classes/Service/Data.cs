@@ -82,17 +82,10 @@ internal static class Data
     }
 
     /// <summary>
-    /// Обязательные ключи конфигурации по группам.
-    /// Для домена достаточно <c>domainname</c>; учётные данные берутся из
+    /// Обязательные ключи домена в конфигурации. Учётные данные берутся из
     /// <c>sdomainuser</c>/<c>sdomainpass</c> либо из <c>domainuser</c>/<c>domainpass</c>.
     /// </summary>
-    private static readonly Dictionary<string, string[]> RequiredKeys =
-        new(StringComparer.OrdinalIgnoreCase)
-        {
-            ["Domain"] = ["domainname"],
-            ["Port"] = ["port"],
-            ["Scheme"] = ["scheme"]
-        };
+    private static readonly string[] RequiredDomainKeys = ["domainname"];
 
     /// <summary>
     /// Читает файл Server.conf и инициализирует <see cref="Domain"/>,
@@ -256,7 +249,7 @@ internal static class Data
 
         try
         {
-            string[] keys = RequiredKeys["Domain"];
+            string[] keys = RequiredDomainKeys;
 
             if (!keys.All(config.ContainsKey))
             {

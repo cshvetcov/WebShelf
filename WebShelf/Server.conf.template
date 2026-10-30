@@ -20,8 +20,10 @@ sdomainuser=
 sdomainpass=
 
 ### Примечание
-# InstanceId (ULID) генерируется автоматически при первом запуске и хранится в
+# InstanceId (ULID) генерируется автоматически при первом запуске (Release) и хранится в
 # HKEY_CURRENT_USER\Software\WebShelf\Encryption (значение InstanceId) под защитой DPAPI.
+# В Debug-сборке InstanceId фиксирован (26 нулей) и один и тот же на всех компьютерах:
+# группы для отладки имеют вид WebShelf-000000000000-*.
 # Пользователи WebShelf должны состоять в группе AD:
 #   WebShelf-{12 символов InstanceId в нижнем регистре}-Users
 # Ролевые группы (пример):

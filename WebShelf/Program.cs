@@ -8,6 +8,33 @@ using WebShelf.Classes.DC;
 using WebShelf.Classes.Service;
 using WebShelf.Components;
 
+// Единый шаблон вывода логов: используется и bootstrap-логгером, и логгером хоста
+const string LogOutputTemplate =
+    "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}";
+
+// Лог последнего запуска (только Debug): перед каждым стартом очищается,
+// поэтому содержит лог только текущего запуска
+const string LastLogFileName = "Last.log";
+
+#if DEBUG
+// Очистка Last.log до создания логгера: sink файла создаётся при конфигурации
+// логгера, поэтому удаление должно пройти раньше. До настройки Serilog логировать
+// некуда (SilentLogger), поэтому при ошибке удаления старт не блокируется —
+// Last.log просто останется с прошлого запуска.
+try
+{
+    string lastLogPath = Path.Combine(AppContext.BaseDirectory, "logs", LastLogFileName);
+    if (File.Exists(lastLogPath))
+    {
+        File.Delete(lastLogPath);
+    }
+}
+catch
+{
+    // Не блокируем старт, если Last.log занят другим процессом или недоступен
+}
+#endif
+
 // Ранний bootstrap-логгер (до Build): общая настройка вынесена в ApplySerilogDefaults
 Log.Logger = ApplySerilogDefaults(new LoggerConfiguration())
     .CreateLogger();
@@ -16,10 +43,12 @@ try
 {
     Log.Information("WebShelf запускается...");
 
-    // Один экземпляр на учётную запись Windows
+    // Один экземпляр на учётную запись Windows.
+    // return (вместо Environment.Exit) гарантирует выполнение finally:
+    // освобождение мьютекса и CloseAndFlush — без потери последних сообщений лога.
     if (!InstanceLock.TryAcquire())
     {
-        Environment.Exit(1);
+        return 1;
     }
 
     // InstanceId ДО MasterKey и конфигурации
@@ -29,8 +58,7 @@ try
         Log.Fatal(
             "Не удалось обеспечить InstanceId (реестр/DPAPI). Приложение останавливается. Class={Class}, Method={Method}",
             "WebShelf.Program", "Main");
-        InstanceLock.Release();
-        Environment.Exit(1);
+        return 1;
     }
 
     Data.SetInstanceId(instanceId);
@@ -41,8 +69,7 @@ try
     if (!Data.ReadConfig())
     {
         Log.Fatal("Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}", "WebShelf.Program", "Main");
-        InstanceLock.Release();
-        Environment.Exit(1);
+        return 1;
     }
 
     // Предупреждение о небезопасной схеме: при http cookie аутентификации
@@ -160,6 +187,7 @@ try
     app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
     app.Run();
+    return 0;
 }
 catch (Exception ex)
 {
@@ -186,6 +214,10 @@ static async Task<IResult> LoginAsync(
     try
     {
         // --- CSRF ---
+        // Antiforgery-middleware (UseAntiforgery) сама отклоняет form-POST без
+        // валидного токена (400). Ручная проверка ниже — второй контур: она срабатывает
+        // для запросов, которые middleware не проверяет (нестандартный Content-Type),
+        // и возвращает дружелюбный редирект на форму входа вместо голого 400.
         try
         {
             await antiforgery.ValidateRequestAsync(context);
@@ -376,7 +408,7 @@ static LoggerConfiguration ApplySerilogDefaults(LoggerConfiguration configuratio
 
     try
     {
-        return configuration
+        LoggerConfiguration config = configuration
             .MinimumLevel.Information()
             .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
             .MinimumLevel.Override("Microsoft.AspNetCore.Components", LogEventLevel.Warning)
@@ -389,7 +421,19 @@ static LoggerConfiguration ApplySerilogDefaults(LoggerConfiguration configuratio
                 rollingInterval: RollingInterval.Day,
                 retainedFileCountLimit: 30,
                 shared: true,
-                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}");
+                outputTemplate: LogOutputTemplate);
+
+#if DEBUG
+        // Дублируем лог в Last.log: файл очищается перед каждым Debug-стартом,
+        // поэтому содержит только текущий запуск. shared: true обязателен —
+        // bootstrap-логгер и логгер хоста пишут в один файл одновременно.
+        config = config.WriteTo.File(
+            path: Path.Combine(AppContext.BaseDirectory, "logs", LastLogFileName),
+            shared: true,
+            outputTemplate: LogOutputTemplate);
+#endif
+
+        return config;
     }
     catch (Exception ex)
     {

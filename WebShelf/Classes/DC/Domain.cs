@@ -1,22 +1,12 @@
-﻿using System.DirectoryServices;
-using System.DirectoryServices.AccountManagement;
+﻿using System.DirectoryServices.AccountManagement;
 using Serilog;
 using WebShelf.Classes.Service;
 
 namespace WebShelf.Classes.DC;
 
 /// <summary>
-/// Краткая информация о пользователе Active Directory,
-/// необходимая для отображения в WebShelf.
-/// </summary>
-/// <param name="SamAccountName">Логин (sAMAccountName).</param>
-/// <param name="DisplayName">Отображаемое имя.</param>
-/// <param name="Email">Адрес электронной почты (атрибут mail).</param>
-internal sealed record AdUserInfo(string SamAccountName, string DisplayName, string Email);
-
-/// <summary>
-/// Представляет домен Active Directory и предоставляет методы
-/// для получения пользователей системы и проверки учётных данных.
+/// Представляет домен Active Directory и предоставляет метод
+/// проверки учётных данных пользователя.
 /// Используется в браузерном приложении WebShelf для работы
 /// с документацией в проектной организации промышленного и гражданского строительства.
 /// </summary>
@@ -209,114 +199,6 @@ internal class Domain
     }
 
     /// <summary>
-    /// Возвращает список пользователей Active Directory, разрешённых для работы в WebShelf.
-    /// Пользователь считается разрешённым, если:
-    /// - учётная запись включена;
-    /// - состоит в группе <c>WebShelf-{InstanceIdShort}-Users</c>.
-    /// Поиск выполняется на стороне контроллера домена с постраничной выборкой.
-    /// Загружаются только атрибуты sAMAccountName, displayName и mail.
-    /// </summary>
-    /// <returns>Список <see cref="AdUserInfo"/>.</returns>
-    /// <exception cref="InvalidOperationException">
-    /// Возникает при ошибках подключения к Active Directory или выполнения поиска.
-    /// </exception>
-    internal IReadOnlyList<AdUserInfo> GetAllUsers()
-    {
-        const string method = nameof(GetAllUsers);
-        List<AdUserInfo> users = [];
-
-        try
-        {
-            Log.Information(
-                "Начало получения списка пользователей AD. Class={Class}, Method={Method}, Domain={Domain}",
-                ClassName, method, Name);
-
-            string serviceUser = GetDecryptedUser();
-            string servicePassword = GetDecryptedPassword();
-
-            Log.Debug(
-                "Подключение к AD для списка пользователей. Class={Class}, Method={Method}, Domain={Domain}, Path={Path}, User={User}",
-                ClassName, method, Name, Path, "SystemAccount");
-
-            // AuthenticationTypes.Secure — negotiate/Kerberos или NTLM; без serverless-сбоев 0x8007054B
-            using DirectoryEntry searchRoot = new(
-                Path,
-                serviceUser,
-                servicePassword,
-                AuthenticationTypes.Secure);
-
-            string usersGroup = $"WebShelf-{Data.InstanceIdShort}-Users";
-            using DirectorySearcher searcher = new(searchRoot)
-            {
-                Filter =
-                    $"(&(objectCategory=person)(objectClass=user)" +
-                    $"(!(userAccountControl:1.2.840.113556.1.4.803:=2))" +
-                    $"(memberOf=*CN={usersGroup}*))",
-                PageSize = 1000,
-                SearchScope = SearchScope.Subtree
-            };
-
-            searcher.PropertiesToLoad.Add("sAMAccountName");
-            searcher.PropertiesToLoad.Add("displayName");
-            searcher.PropertiesToLoad.Add("mail");
-
-            using SearchResultCollection results = searcher.FindAll();
-
-            foreach (SearchResult result in results)
-            {
-                string? sam = GetProperty(result, "sAMAccountName");
-                if (string.IsNullOrWhiteSpace(sam))
-                {
-                    Log.Debug(
-                        "Пропущена запись без sAMAccountName. Class={Class}, Method={Method}, Domain={Domain}",
-                        ClassName, method, Name);
-                    continue;
-                }
-
-                string displayName = GetProperty(result, "displayName") ?? sam;
-                string email = GetProperty(result, "mail") ?? string.Empty;
-
-                users.Add(new AdUserInfo(sam, displayName, email));
-            }
-
-            Log.Information(
-                "Список пользователей AD успешно получен. Class={Class}, Method={Method}, Domain={Domain}, Count={Count}",
-                ClassName, method, Name, users.Count);
-
-            return users.AsReadOnly();
-        }
-        catch (PrincipalServerDownException ex)
-        {
-            Log.Error(ex,
-                "Контроллер домена недоступен при получении пользователей. Class={Class}, Method={Method}, Domain={Domain}",
-                ClassName, method, Name);
-
-            throw new InvalidOperationException(
-                "Не удалось подключиться к Active Directory.",
-                new InvalidOperationException($"Сервер: {Name}", ex));
-        }
-        catch (System.Runtime.InteropServices.COMException ex)
-        {
-            Log.Error(ex,
-                "COM-ошибка AD при получении пользователей. Class={Class}, Method={Method}, Domain={Domain}, Path={Path}, HResult=0x{HResult:X8}",
-                ClassName, method, Name, Path, ex.HResult);
-
-            throw new InvalidOperationException(
-                "Не удалось подключиться к Active Directory (LDAP).",
-                new InvalidOperationException($"Сервер: {Name}, Path: {Path}", ex));
-        }
-        catch (Exception ex) when (ex is not InvalidOperationException)
-        {
-            Log.Error(ex,
-                "Ошибка при получении списка пользователей из Active Directory. Class={Class}, Method={Method}, Domain={Domain}, Path={Path}",
-                ClassName, method, Name, Path);
-
-            throw new InvalidOperationException(
-                "Ошибка при получении списка пользователей из Active Directory.", ex);
-        }
-    }
-
-    /// <summary>
     /// Проверяет учётные данные пользователя в Active Directory.
     /// При <paramref name="checkUsersGroup"/> = <see langword="true"/> дополнительно проверяет
     /// членство в группе <c>WebShelf-{InstanceIdShort}-Users</c>.
@@ -442,16 +324,6 @@ internal class Domain
             throw new InvalidOperationException(
                 "Ошибка при проверке учётных данных в Active Directory.", ex);
         }
-    }
-
-    /// <summary>
-    /// Извлекает первое строковое значение свойства из результата поиска AD.
-    /// </summary>
-    private static string? GetProperty(SearchResult result, string propertyName)
-    {
-        if (result.Properties[propertyName] is { Count: > 0 } props)
-            return props[0]?.ToString();
-        return null;
     }
 
     /// <summary>

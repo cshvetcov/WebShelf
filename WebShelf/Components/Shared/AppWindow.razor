@@ -6,8 +6,8 @@
 *@
 
 @implements IAsyncDisposable
+@using Serilog
 @inject IJSRuntime Js
-@inject ILogger<AppWindow> Logger
 
 <div class="ws-window" id="@WindowElementId" style="@(string.IsNullOrEmpty(MaxWidth) ? null : $"max-width:{MaxWidth}")">
     <div class="ws-window-titlebar">
@@ -127,7 +127,7 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
         }
     }
 
@@ -162,7 +162,7 @@
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Исключение в {Class}.{Method}", ClassName, nameof(DisposeAsync));
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(DisposeAsync));
         }
     }
 }

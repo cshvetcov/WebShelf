@@ -29,6 +29,16 @@ internal static class EncryptionService
     private const int HmacSizeBytes = 32;
     private const int CipherBlockSizeBytes = 16;
 
+    /// <summary>Длина InstanceId (ULID) — 26 символов Crockford Base32.</summary>
+    private const int InstanceIdLength = 26;
+
+    /// <summary>
+    /// Фиксированный InstanceId (26 нулей) для Debug-сборки: экземпляры приложения
+    /// на разных компьютерах обращаются к одним и тем же AD-группам
+    /// WebShelf-000000000000-*.
+    /// </summary>
+    private const string DebugFixedInstanceId = "00000000000000000000000000";
+
     private static readonly byte[] AesKeyDerivationLabel = Encoding.UTF8.GetBytes("WebShelf.Classes.Service.EncryptionService.AES.v1");
 
     private static readonly byte[] HmacKeyDerivationLabel = Encoding.UTF8.GetBytes("WebShelf.Classes.Service.EncryptionService.HMAC.v1");
@@ -133,10 +143,23 @@ internal static class EncryptionService
     /// повреждённые данные возвращает <see langword="null"/> (вызов должен аварийно завершиться).
     /// </summary>
     /// <returns>Полный ULID (26 символов) или <see langword="null"/> при ошибке.</returns>
+    /// <remarks>
+    /// В Debug-сборке реестр не используется: всегда возвращается фиксированный
+    /// InstanceId из нулей (<see cref="DebugFixedInstanceId"/>), чтобы экземпляры
+    /// на разных компьютерах при отладке ссылались на одни и те же AD-группы.
+    /// </remarks>
     internal static string? EnsureInstanceId()
     {
         const string method = nameof(EnsureInstanceId);
 
+#if DEBUG
+        // Debug: фиксированное значение из нулей, реестр не читается и не пишется —
+        // значение не зависит от ранее сохранённого ULID и одинаково на всех машинах
+        Log.Information(
+            "InstanceId (Debug): используется фиксированное значение из нулей. Class={Class}, Method={Method}",
+            ClassName, method);
+        return DebugFixedInstanceId;
+#else
         try
         {
             lock (RegistrySync)
@@ -219,6 +242,7 @@ internal static class EncryptionService
             Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
             return null;
         }
+#endif
     }
 
     /// <summary>
@@ -226,7 +250,7 @@ internal static class EncryptionService
     /// </summary>
     private static bool IsValidUlidString(string value)
     {
-        if (value.Length != 26)
+        if (value.Length != InstanceIdLength)
             return false;
 
         foreach (char c in value)
