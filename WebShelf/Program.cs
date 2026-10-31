@@ -43,6 +43,16 @@ try
 {
     Log.Information("WebShelf запускается...");
 
+    string version = ThisAssembly.AssemblyInformationalVersion.Split('+')[0];
+
+    string commitShort = ThisAssembly.GitCommitId is { Length: >= 10 } id ? id[..10] : ThisAssembly.GitCommitId ?? "unknown";
+
+    Log.Information(
+        "Версия: {Version}, Commit={Commit}. Class={Class}, Method={Method}",
+        version,
+        commitShort,
+        "WebShelf.Program", "Main");
+
     // Один экземпляр на учётную запись Windows.
     // return (вместо Environment.Exit) гарантирует выполнение finally:
     // освобождение мьютекса и CloseAndFlush — без потери последних сообщений лога.
