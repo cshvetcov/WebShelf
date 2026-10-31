@@ -39,6 +39,11 @@ catch
 Log.Logger = ApplySerilogDefaults(new LoggerConfiguration())
     .CreateLogger();
 
+// Единственный экземпляр хранилища системных данных. Создаётся до сборки хоста:
+// схема, порт и домен из Server.conf нужны при конфигурации хоста (UseUrls, cookie).
+// Этот же экземпляр ниже регистрируется в DI как singleton.
+Data data = new();
+
 try
 {
     Log.Information("WebShelf запускается...");
@@ -71,12 +76,12 @@ try
         return 1;
     }
 
-    Data.SetInstanceId(instanceId);
+    data.SetInstanceId(instanceId);
     Log.Information(
         "InstanceId готов. Short={Short}. Class={Class}, Method={Method}",
-        Data.InstanceIdShort, "WebShelf.Program", "Main");
+        data.InstanceIdShort, "WebShelf.Program", "Main");
 
-    if (!await Data.ReadConfigAsync())
+    if (!await data.ReadConfigAsync())
     {
         Log.Fatal("Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}", "WebShelf.Program", "Main");
         return 1;
@@ -84,7 +89,7 @@ try
 
     // Предупреждение о небезопасной схеме: при http cookie аутентификации
     // передаются без флага Secure и могут быть перехвачены в канале связи.
-    if (string.Equals(Data.Scheme, "http", StringComparison.OrdinalIgnoreCase))
+    if (string.Equals(data.Scheme, "http", StringComparison.OrdinalIgnoreCase))
     {
         Log.Warning(
             "Схема http: cookie аутентификации передаются без защиты Secure. Рекомендуется использовать https. Class={Class}, Method={Method}",
@@ -97,7 +102,7 @@ try
     builder.Host.UseSerilog((context, services, configuration) => ApplySerilogDefaults(configuration));
 
     // Схема и порт только из Server.conf (независимо от launchSettings.json и профилей http/https)
-    string listenUrl = $"{Data.Scheme}://0.0.0.0:{Data.Port}";
+    string listenUrl = $"{data.Scheme}://0.0.0.0:{data.Port}";
     builder.WebHost.UseUrls(listenUrl);
     Log.Information(
         "Прослушивание {ListenUrl} (Server.conf). Class={Class}, Method={Method}",
@@ -121,7 +126,7 @@ try
     #endregion
 
     #region Аутентификация через куки
-    bool preferSecure = string.Equals(Data.Scheme, "https", StringComparison.OrdinalIgnoreCase);
+    bool preferSecure = string.Equals(data.Scheme, "https", StringComparison.OrdinalIgnoreCase);
 
     builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
         .AddCookie(options =>
@@ -160,6 +165,9 @@ try
             : CookieSecurePolicy.SameAsRequest;
         options.Cookie.SameSite = SameSiteMode.Strict;
     });
+
+    // Хранилище системных данных (конфигурация уже загружена выше) — singleton в DI
+    builder.Services.AddSingleton(data);
 
     builder.Services.AddSingleton<LoginGuard>();
 
@@ -207,7 +215,7 @@ catch (Exception ex)
 finally
 {
     // Освобождение пула соединений PostgreSQL до закрытия логов
-    Data.Database?.Dispose();
+    data.Database?.Dispose();
     InstanceLock.Release();
     Log.CloseAndFlush();
 }
@@ -218,7 +226,8 @@ finally
 static async Task<IResult> LoginAsync(
     HttpContext context,
     IAntiforgery antiforgery,
-    LoginGuard loginGuard)
+    LoginGuard loginGuard,
+    Data data)
 {
     const string className = "WebShelf.Program";
     const string method = nameof(LoginAsync);
@@ -251,12 +260,12 @@ static async Task<IResult> LoginAsync(
         // 'ivanov@domain' должны попадать в один и тот же ключ учёта попыток.
         // Без канонизации перебор форматов имени обходит per-account блокировку:
         // каждый формат заводит в LoginGuard отдельный счётчик.
-        // Доменная часть известна только после загрузки конфигурации (Data.Domain),
+        // Доменная часть известна только после загрузки конфигурации (data.Domain),
         // поэтому при её отсутствии канонизация невозможна — передаётся null и
         // попытки учитываются только по IP-ключу.
-        string? userKey = string.IsNullOrWhiteSpace(username) || Data.Domain is null
+        string? userKey = string.IsNullOrWhiteSpace(username) || data.Domain is null
             ? null
-            : Domain.NormalizeUserName(username, Data.Domain.Name);
+            : Domain.NormalizeUserName(username, data.Domain.Name);
 
         // --- Brute-force: уже заблокирован? ---
         if (loginGuard.IsLocked(clientIp, userKey, out int remainBefore))
@@ -269,7 +278,7 @@ static async Task<IResult> LoginAsync(
 
         // userKey == null при непустом имени — формат не распознан (нет домена или
         // некорректный ввод): AD-проверка всё равно бы не прошла, фиксируем как отказ.
-        if (string.IsNullOrWhiteSpace(username) || password is null || Data.Domain is null || userKey is null)
+        if (string.IsNullOrWhiteSpace(username) || password is null || data.Domain is null || userKey is null)
         {
             int lockedSec = loginGuard.RecordFailure(clientIp, null);
             if (lockedSec > 0)
@@ -277,7 +286,7 @@ static async Task<IResult> LoginAsync(
             return Results.Redirect("/entry?error=invalid");
         }
 
-        bool isValid = Data.Domain.ValidateAdCredentials(userKey, password);
+        bool isValid = data.Domain.ValidateAdCredentials(userKey, password);
         if (!isValid)
         {
             int lockedSec = loginGuard.RecordFailure(clientIp, userKey);

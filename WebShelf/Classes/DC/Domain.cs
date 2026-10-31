@@ -45,6 +45,12 @@ internal class Domain
     private readonly string _encryptedPassword;
 
     /// <summary>
+    /// Короткий префикс InstanceId (12 символов, нижний регистр) для имён AD-групп
+    /// WebShelf-{id}-*. Передаётся явно — класс не зависит от хранилища Data.
+    /// </summary>
+    private readonly string _instanceIdShort;
+
+    /// <summary>
     /// Создаёт экземпляр класса <see cref="Domain"/>.
     /// Параметры <paramref name="encryptedUser"/> и <paramref name="encryptedPassword"/>
     /// должны быть уже зашифрованы мастер-ключом (<see cref="EncryptionService"/>).
@@ -53,6 +59,8 @@ internal class Domain
     /// <c>WebShelf-{InstanceIdShort}-Users</c>.
     /// </summary>
     /// <param name="domain">Имя домена (FQDN).</param>
+    /// <param name="instanceIdShort">Короткий префикс InstanceId (12 символов, нижний регистр)
+    /// для имён AD-групп WebShelf-{id}-*. Передаётся явно — класс не зависит от хранилища Data.</param>
     /// <param name="encryptedUser">Зашифрованное имя сервисной учётной записи (Base64).</param>
     /// <param name="encryptedPassword">Зашифрованный пароль сервисной учётной записи (Base64).</param>
     /// <exception cref="ArgumentException">
@@ -62,12 +70,14 @@ internal class Domain
     /// <exception cref="InvalidOperationException">
     /// Возникает, если мастер-ключ недоступен или расшифровка не удалась.
     /// </exception>
-    internal Domain(string domain, string encryptedUser, string encryptedPassword)
+    internal Domain(string domain, string instanceIdShort, string encryptedUser, string encryptedPassword)
     {
         const string method = ".ctor";
 
         if (string.IsNullOrWhiteSpace(domain))
             throw new ArgumentException("Имя домена не может быть пустым.", nameof(domain));
+        if (string.IsNullOrWhiteSpace(instanceIdShort))
+            throw new ArgumentException("Короткий префикс InstanceId не может быть пустым.", nameof(instanceIdShort));
         if (string.IsNullOrWhiteSpace(encryptedUser))
             throw new ArgumentException("Зашифрованное имя пользователя не может быть пустым.", nameof(encryptedUser));
         if (string.IsNullOrWhiteSpace(encryptedPassword))
@@ -108,6 +118,7 @@ internal class Domain
             throw new ArgumentException($"Имя пользователя '{plainUser}' не удалось привести к формату username@domain.", nameof(encryptedUser));
 
         Name = domain.Trim();
+        _instanceIdShort = instanceIdShort.Trim();
 
         // Перед записью в поля — шифруем (нормализованный логин и пароль)
         try
@@ -255,7 +266,7 @@ internal class Domain
                 return true;
             }
 
-            string usersGroupName = $"WebShelf-{Data.InstanceIdShort}-Users";
+            string usersGroupName = $"WebShelf-{_instanceIdShort}-Users";
             string serviceUser = GetDecryptedUser();
             string servicePassword = GetDecryptedPassword();
 
@@ -328,7 +339,7 @@ internal class Domain
 
     /// <summary>
     /// Приводит имя пользователя к формату <c>username@domainname</c>.
-    /// Имя домена передаётся явно — класс не зависит от статического хранилища Data.
+    /// Имя домена передаётся явно — класс не зависит от хранилища Data.
     /// </summary>
     internal static string? NormalizeUserName(string userName, string domainName)
     {

@@ -12,7 +12,13 @@ namespace WebShelf.Classes.Service;
 /// экземпляра домена Active Directory, подключения к PostgreSQL,
 /// InstanceId, порта и схемы (http/https).
 /// </summary>
-internal static class Data
+/// <remarks>
+/// Ранее класс был статическим (глобальное изменяемое состояние), переведён на DI.
+/// Единственный экземпляр создаётся в Program.Main до сборки хоста — схема и порт
+/// из Server.conf нужны при конфигурации хоста (UseUrls, политика cookie) —
+/// и регистрируется в DI как singleton.
+/// </remarks>
+internal sealed class Data
 {
     private const string ClassName = "WebShelf.Classes.Service.Data";
 
@@ -20,47 +26,47 @@ internal static class Data
     /// Порт, на котором слушает HTTP(S)-сервер.
     /// <see langword="null"/>, если не задан или некорректен.
     /// </summary>
-    internal static int? Port { get; private set; }
+    internal int? Port { get; private set; }
 
     /// <summary>
     /// Схема прослушивания: <c>http</c> или <c>https</c>.
     /// <see langword="null"/>, если не задана или некорректна.
     /// </summary>
-    internal static string? Scheme { get; private set; }
+    internal string? Scheme { get; private set; }
 
     /// <summary>
     /// Полный путь к файлу конфигурации Server.conf.
     /// </summary>
-    internal static string ConfigFile { get; } =
+    private string ConfigFile { get; } =
         Path.Combine(AppContext.BaseDirectory, "Server.conf");
 
     /// <summary>
     /// Экземпляр домена Active Directory.
     /// <see langword="null"/>, если конфигурация не загружена или неполная.
     /// </summary>
-    internal static Domain? Domain { get; private set; }
+    internal Domain? Domain { get; private set; }
 
     /// <summary>
     /// Подключение к базе данных PostgreSQL.
     /// <see langword="null"/>, если конфигурация не загружена или неполная.
     /// </summary>
-    internal static Database? Database { get; private set; }
+    internal Database? Database { get; private set; }
 
     /// <summary>
     /// Полный InstanceId (ULID, 26 символов). Write-once на весь срок жизни процесса.
     /// </summary>
-    private static string? _instanceId;
+    private string? _instanceId;
 
     /// <summary>
     /// Полный InstanceId. Бросает <see cref="InvalidOperationException"/>, если ещё не инициализирован.
     /// </summary>
-    internal static string InstanceId =>
+    internal string InstanceId =>
         _instanceId ?? throw new InvalidOperationException("InstanceId ещё не инициализирован.");
 
     /// <summary>
     /// 12-символьный префикс InstanceId (нижний регистр) для имён AD-групп WebShelf-{id}-*.
     /// </summary>
-    internal static string InstanceIdShort
+    internal string InstanceIdShort
     {
         get
         {
@@ -74,7 +80,7 @@ internal static class Data
     /// Повторный вызов вызывает <see cref="InvalidOperationException"/>.
     /// </summary>
     /// <param name="value">Полный ULID (26 символов).</param>
-    internal static void SetInstanceId(string value)
+    internal void SetInstanceId(string value)
     {
         const string method = nameof(SetInstanceId);
 
@@ -110,7 +116,7 @@ internal static class Data
     /// (файл существует, ключи найдены, объекты созданы, домен доступен);
     /// <see langword="false"/> — при любой ошибке.
     /// </returns>
-    internal static async Task<bool> ReadConfigAsync()
+    internal async Task<bool> ReadConfigAsync()
     {
         const string method = nameof(ReadConfigAsync);
 
@@ -190,7 +196,7 @@ internal static class Data
     /// Читает файл конфигурации в словарь ключ=значение.
     /// Строки-комментарии (начинающиеся с #) и пустые строки игнорируются.
     /// </summary>
-    private static Dictionary<string, string> ReadConfigFile(string path)
+    private Dictionary<string, string> ReadConfigFile(string path)
     {
         const string method = nameof(ReadConfigFile);
         Dictionary<string, string> config = new(StringComparer.OrdinalIgnoreCase);
@@ -261,7 +267,7 @@ internal static class Data
     /// записываются в <c>sdomainuser</c>/<c>sdomainpass</c>, открытые поля очищаются.
     /// </para>
     /// </summary>
-    private static bool TryInitDomain(Dictionary<string, string> config)
+    private bool TryInitDomain(Dictionary<string, string> config)
     {
         const string method = nameof(TryInitDomain);
 
@@ -381,8 +387,9 @@ internal static class Data
                     ClassName, method);
             }
 
-            // В Domain передаём зашифрованные значения (принадлежность к WebShelf — через AD-группу)
-            Domain = new Domain(domainName, encryptedUser, encryptedPass);
+            // В Domain передаём зашифрованные значения и короткий InstanceId
+            // (имена AD-групп WebShelf-{id}-*) — Domain не зависит от хранилища Data
+            Domain = new Domain(domainName, InstanceIdShort, encryptedUser, encryptedPass);
 
             Log.Information(
                 "Домен инициализирован. Domain={Domain}, User={User}. Class={Class}, Method={Method}",
@@ -416,34 +423,68 @@ internal static class Data
     }
 
     /// <summary>
-    /// Записывает зашифрованные <c>sdomainuser</c> и <c>sdomainpass</c> в Server.conf,
-    /// очищает значения <c>domainuser</c> и <c>domainpass</c>.
-    /// Сохраняет комментарии и порядок остальных строк.
+    /// Имена ключей конфигурации для пары учётных данных: зашифрованные
+    /// (<c>s…user</c>/<c>s…pass</c>) и открытые (<c>…user</c>/<c>…pass</c>),
+    /// плюс подписи для логов. Позволяет одной процедуре записи
+    /// <see cref="WriteSecureCredentials"/> обслуживать и домен, и БД.
     /// </summary>
-    /// <param name="encryptedUser">Зашифрованное имя сервисной учётки (Base64).</param>
-    /// <param name="encryptedPass">Зашифрованный пароль сервисной учётки (Base64).</param>
-    /// <returns><see langword="true"/> при успешной записи; иначе <see langword="false"/>.</returns>
-    private static bool WriteSecureDomainCredentials(string encryptedUser, string encryptedPass)
+    /// <param name="SecureUserKey">Ключ зашифрованного имени учётной записи.</param>
+    /// <param name="SecurePassKey">Ключ зашифрованного пароля учётной записи.</param>
+    /// <param name="PlainUserKey">Ключ открытого имени учётной записи (очищается после переноса).</param>
+    /// <param name="PlainPassKey">Ключ открытого пароля учётной записи (очищается после переноса).</param>
+    /// <param name="OwnerLabel">Подпись владельца учётных данных для логов: "домена", "БД".</param>
+    private readonly record struct CredentialKeys(
+        string SecureUserKey,
+        string SecurePassKey,
+        string PlainUserKey,
+        string PlainPassKey,
+        string OwnerLabel)
     {
-        const string method = nameof(WriteSecureDomainCredentials);
+        /// <summary>
+        /// Подпись пары зашифрованных ключей для логов:
+        /// "sdomainuser/sdomainpass", "sdbuser/sdbpass".
+        /// </summary>
+        internal string SecurePairLabel => $"{SecureUserKey}/{SecurePassKey}";
+    }
+
+    /// <summary>Ключи конфигурации сервисной учётной записи домена.</summary>
+    private static readonly CredentialKeys DomainCredentialKeys =
+        new("sdomainuser", "sdomainpass", "domainuser", "domainpass", "домена");
+
+    /// <summary>Ключи конфигурации сервисной учётной записи БД.</summary>
+    private static readonly CredentialKeys DatabaseCredentialKeys =
+        new("sdbuser", "sdbpass", "dbuser", "dbpass", "БД");
+
+    /// <summary>
+    /// Записывает зашифрованные учётные данные в Server.conf по общей процедуре:
+    /// обновляет значения зашифрованных ключей, очищает открытые ключи,
+    /// сохраняет комментарии и порядок остальных строк.
+    /// </summary>
+    /// <param name="keys">Имена ключей конфигурации и подписи для логов.</param>
+    /// <param name="encryptedUser">Зашифрованное имя учётной записи (Base64).</param>
+    /// <param name="encryptedPass">Зашифрованный пароль учётной записи (Base64).</param>
+    /// <returns><see langword="true"/> при успешной записи; иначе <see langword="false"/>.</returns>
+    private bool WriteSecureCredentials(CredentialKeys keys, string encryptedUser, string encryptedPass)
+    {
+        const string method = nameof(WriteSecureCredentials);
 
         try
         {
             if (!File.Exists(ConfigFile))
             {
                 Log.Error(
-                    "Файл конфигурации не найден при записи sdomain*. Class={Class}, Method={Method}, Path={Path}",
-                    ClassName, method, ConfigFile);
+                    "Файл конфигурации не найден при записи {Keys}. Class={Class}, Method={Method}, Path={Path}",
+                    keys.SecurePairLabel, ClassName, method, ConfigFile);
                 return false;
             }
 
             string[] lines = File.ReadAllLines(ConfigFile, Encoding.UTF8);
             List<string> result = new(lines.Length + 4);
 
-            bool hasSUser = false;
-            bool hasSPass = false;
-            bool hasDomainUser = false;
-            bool hasDomainPass = false;
+            bool hasSecureUser = false;
+            bool hasSecurePass = false;
+            bool hasPlainUser = false;
+            bool hasPlainPass = false;
 
             foreach (string line in lines)
             {
@@ -464,27 +505,27 @@ internal static class Data
 
                 string key = trimmed[..eqIndex].Trim();
 
-                if (key.Equals("sdomainuser", StringComparison.OrdinalIgnoreCase))
+                if (key.Equals(keys.SecureUserKey, StringComparison.OrdinalIgnoreCase))
                 {
-                    result.Add($"sdomainuser={encryptedUser}");
-                    hasSUser = true;
+                    result.Add($"{keys.SecureUserKey}={encryptedUser}");
+                    hasSecureUser = true;
                 }
-                else if (key.Equals("sdomainpass", StringComparison.OrdinalIgnoreCase))
+                else if (key.Equals(keys.SecurePassKey, StringComparison.OrdinalIgnoreCase))
                 {
-                    result.Add($"sdomainpass={encryptedPass}");
-                    hasSPass = true;
+                    result.Add($"{keys.SecurePassKey}={encryptedPass}");
+                    hasSecurePass = true;
                 }
-                else if (key.Equals("domainuser", StringComparison.OrdinalIgnoreCase))
+                else if (key.Equals(keys.PlainUserKey, StringComparison.OrdinalIgnoreCase))
                 {
-                    // Открытый логин очищаем после переноса в sdomainuser
-                    result.Add("domainuser=");
-                    hasDomainUser = true;
+                    // Открытый логин очищаем после переноса в зашифрованный ключ
+                    result.Add($"{keys.PlainUserKey}=");
+                    hasPlainUser = true;
                 }
-                else if (key.Equals("domainpass", StringComparison.OrdinalIgnoreCase))
+                else if (key.Equals(keys.PlainPassKey, StringComparison.OrdinalIgnoreCase))
                 {
-                    // Открытый пароль очищаем после переноса в sdomainpass
-                    result.Add("domainpass=");
-                    hasDomainPass = true;
+                    // Открытый пароль очищаем после переноса в зашифрованный ключ
+                    result.Add($"{keys.PlainPassKey}=");
+                    hasPlainPass = true;
                 }
                 else
                 {
@@ -492,14 +533,14 @@ internal static class Data
                 }
             }
 
-            if (!hasSUser)
-                result.Add($"sdomainuser={encryptedUser}");
-            if (!hasSPass)
-                result.Add($"sdomainpass={encryptedPass}");
-            if (!hasDomainUser)
-                result.Add("domainuser=");
-            if (!hasDomainPass)
-                result.Add("domainpass=");
+            if (!hasSecureUser)
+                result.Add($"{keys.SecureUserKey}={encryptedUser}");
+            if (!hasSecurePass)
+                result.Add($"{keys.SecurePassKey}={encryptedPass}");
+            if (!hasPlainUser)
+                result.Add($"{keys.PlainUserKey}=");
+            if (!hasPlainPass)
+                result.Add($"{keys.PlainPassKey}=");
 
             // Атомарная подмена: запись во временный файл + File.Replace исключает
             // появление усечённого конфига при сбое питания или аварийном завершении.
@@ -509,21 +550,31 @@ internal static class Data
             File.Replace(tempPath, ConfigFile, destinationBackupFileName: null);
 
             Log.Information(
-                "Зашифрованные учётные данные домена записаны в конфигурацию. Class={Class}, Method={Method}",
-                ClassName, method);
+                "Зашифрованные учётные данные {Owner} записаны в конфигурацию. Class={Class}, Method={Method}",
+                keys.OwnerLabel, ClassName, method);
 
             return true;
         }
         catch (Exception ex)
         {
             Log.Error(ex,
-                "Ошибка записи sdomainuser/sdomainpass. Class={Class}, Method={Method}, Path={Path}",
-                ClassName, method, ConfigFile);
+                "Ошибка записи {Keys}. Class={Class}, Method={Method}, Path={Path}",
+                keys.SecurePairLabel, ClassName, method, ConfigFile);
             return false;
         }
     }
 
-
+    /// <summary>
+    /// Записывает зашифрованные <c>sdomainuser</c> и <c>sdomainpass</c> в Server.conf,
+    /// очищает значения <c>domainuser</c> и <c>domainpass</c>.
+    /// </summary>
+    /// <param name="encryptedUser">Зашифрованное имя сервисной учётки (Base64).</param>
+    /// <param name="encryptedPass">Зашифрованный пароль сервисной учётки (Base64).</param>
+    /// <returns><see langword="true"/> при успешной записи; иначе <see langword="false"/>.</returns>
+    private bool WriteSecureDomainCredentials(string encryptedUser, string encryptedPass)
+    {
+        return WriteSecureCredentials(DomainCredentialKeys, encryptedUser, encryptedPass);
+    }
 
     /// <summary>
     /// Асинхронно инициализирует <see cref="Database"/> из словаря конфигурации
@@ -537,7 +588,7 @@ internal static class Data
     /// записываются в <c>sdbuser</c>/<c>sdbpass</c>, открытые поля очищаются.
     /// </para>
     /// </summary>
-    private static async Task<bool> TryInitDatabaseAsync(Dictionary<string, string> config)
+    private async Task<bool> TryInitDatabaseAsync(Dictionary<string, string> config)
     {
         const string method = nameof(TryInitDatabaseAsync);
 
@@ -727,113 +778,19 @@ internal static class Data
     /// <summary>
     /// Записывает зашифрованные <c>sdbuser</c> и <c>sdbpass</c> в Server.conf,
     /// очищает значения <c>dbuser</c> и <c>dbpass</c>.
-    /// Сохраняет комментарии и порядок остальных строк.
     /// </summary>
     /// <param name="encryptedUser">Зашифрованное имя сервисной учётки БД (Base64).</param>
     /// <param name="encryptedPass">Зашифрованный пароль сервисной учётки БД (Base64).</param>
     /// <returns><see langword="true"/> при успешной записи; иначе <see langword="false"/>.</returns>
-    private static bool WriteSecureDbCredentials(string encryptedUser, string encryptedPass)
+    private bool WriteSecureDbCredentials(string encryptedUser, string encryptedPass)
     {
-        const string method = nameof(WriteSecureDbCredentials);
-
-        try
-        {
-            if (!File.Exists(ConfigFile))
-            {
-                Log.Error(
-                    "Файл конфигурации не найден при записи sdb*. Class={Class}, Method={Method}, Path={Path}",
-                    ClassName, method, ConfigFile);
-                return false;
-            }
-
-            string[] lines = File.ReadAllLines(ConfigFile, Encoding.UTF8);
-            List<string> result = new(lines.Length + 4);
-
-            bool hasSUser = false;
-            bool hasSPass = false;
-            bool hasDbUser = false;
-            bool hasDbPass = false;
-
-            foreach (string line in lines)
-            {
-                string trimmed = line.Trim();
-
-                if (trimmed.Length == 0 || trimmed[0] == '#')
-                {
-                    result.Add(line);
-                    continue;
-                }
-
-                int eqIndex = trimmed.IndexOf('=');
-                if (eqIndex <= 0)
-                {
-                    result.Add(line);
-                    continue;
-                }
-
-                string key = trimmed[..eqIndex].Trim();
-
-                if (key.Equals("sdbuser", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Add($"sdbuser={encryptedUser}");
-                    hasSUser = true;
-                }
-                else if (key.Equals("sdbpass", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Add($"sdbpass={encryptedPass}");
-                    hasSPass = true;
-                }
-                else if (key.Equals("dbuser", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Add("dbuser=");
-                    hasDbUser = true;
-                }
-                else if (key.Equals("dbpass", StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Add("dbpass=");
-                    hasDbPass = true;
-                }
-                else
-                {
-                    result.Add(line);
-                }
-            }
-
-            if (!hasSUser)
-                result.Add($"sdbuser={encryptedUser}");
-            if (!hasSPass)
-                result.Add($"sdbpass={encryptedPass}");
-            if (!hasDbUser)
-                result.Add("dbuser=");
-            if (!hasDbPass)
-                result.Add("dbpass=");
-
-            // Атомарная подмена: запись во временный файл + File.Replace исключает
-            // появление усечённого конфига при сбое питания или аварийном завершении.
-            // Оставшийся после сбоя .tmp перезаписывается при следующей попытке
-            string tempPath = ConfigFile + ".tmp";
-            File.WriteAllLines(tempPath, result, Encoding.UTF8);
-            File.Replace(tempPath, ConfigFile, destinationBackupFileName: null);
-
-            Log.Information(
-                "Зашифрованные учётные данные БД записаны в конфигурацию. Class={Class}, Method={Method}",
-                ClassName, method);
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex,
-                "Ошибка записи sdbuser/sdbpass. Class={Class}, Method={Method}, Path={Path}",
-                ClassName, method, ConfigFile);
-            return false;
-        }
+        return WriteSecureCredentials(DatabaseCredentialKeys, encryptedUser, encryptedPass);
     }
 
     /// <summary>
     /// Читает и проверяет порт из конфигурации.
     /// </summary>
-    private static bool TryInitPort(Dictionary<string, string> config)
+    private bool TryInitPort(Dictionary<string, string> config)
     {
         const string method = nameof(TryInitPort);
 
@@ -868,7 +825,7 @@ internal static class Data
     /// <summary>
     /// Читает и проверяет схему (http/https) из конфигурации.
     /// </summary>
-    private static bool TryInitScheme(Dictionary<string, string> config)
+    private bool TryInitScheme(Dictionary<string, string> config)
     {
         const string method = nameof(TryInitScheme);
 

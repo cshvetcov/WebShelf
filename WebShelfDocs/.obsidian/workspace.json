@@ -4,11 +4,11 @@
     "type": "split",
     "children": [
       {
-        "id": "a9baa21e3e1125e9",
+        "id": "b7cdbb794fa8bc4c",
         "type": "tabs",
         "children": [
           {
-            "id": "5c46698febe5b1f6",
+            "id": "cf63740792918da9",
             "type": "leaf",
             "state": {
               "type": "empty",
@@ -184,13 +184,15 @@
       "bases:Создать новую базу": false
     }
   },
-  "active": "5c46698febe5b1f6",
+  "active": "cf63740792918da9",
   "lastOpenFiles": [
-    "file:C:/Users/cshve/AGENTS.md",
-    "Описание.md",
     "Решения в проекте/Группы пользователей.md",
     "Решения в проекте/Пользователи.md",
+    "Решения в проекте/База данных.md",
     "Требования к коду/Логирование.md",
+    "Описание.md",
+    "file:C:/Users/cshve/Downloads/AGENTS.md",
+    "file:C:/Users/cshve/AGENTS.md",
     "Требования к коду/Пространства имен.md",
     "Визуальное оформление/Стиль окон.md",
     "Визуальное оформление/Визуальное оформление.md",
