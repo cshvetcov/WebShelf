@@ -97,18 +97,22 @@ internal static class Data
     private static readonly string[] RequiredDomainKeys = ["domainname"];
 
     /// <summary>
-    /// Читает файл Server.conf и инициализирует <see cref="Domain"/>,
+    /// Асинхронно читает файл Server.conf и инициализирует <see cref="Domain"/>,
     /// <see cref="Port"/> и <see cref="Scheme"/>.
     /// InstanceId должен быть установлен через <see cref="SetInstanceId"/> до вызова.
     /// </summary>
+    /// <remarks>
+    /// Инициализация БД включает сетевую проверку доступности PostgreSQL,
+    /// поэтому выполняется асинхронно из Program.Main — без sync-over-async блокировок.
+    /// </remarks>
     /// <returns>
     /// <see langword="true"/>, если конфигурация прочитана успешно
     /// (файл существует, ключи найдены, объекты созданы, домен доступен);
     /// <see langword="false"/> — при любой ошибке.
     /// </returns>
-    internal static bool ReadConfig()
+    internal static async Task<bool> ReadConfigAsync()
     {
-        const string method = nameof(ReadConfig);
+        const string method = nameof(ReadConfigAsync);
 
         try
         {
@@ -117,6 +121,7 @@ internal static class Data
                 ClassName, method, ConfigFile);
 
             Domain = null;
+            Database?.Dispose();
             Database = null;
             Port = null;
             Scheme = null;
@@ -148,7 +153,7 @@ internal static class Data
             }
 
             bool domainOk = TryInitDomain(config);
-            bool databaseOk = TryInitDatabase(config);
+            bool databaseOk = await TryInitDatabaseAsync(config).ConfigureAwait(false);
             bool portOk = TryInitPort(config);
             bool schemeOk = TryInitScheme(config);
 
@@ -173,6 +178,7 @@ internal static class Data
                 ClassName, method, ConfigFile);
 
             Domain = null;
+            Database?.Dispose();
             Database = null;
             Port = null;
             Scheme = null;
@@ -495,7 +501,12 @@ internal static class Data
             if (!hasDomainPass)
                 result.Add("domainpass=");
 
-            File.WriteAllLines(ConfigFile, result, Encoding.UTF8);
+            // Атомарная подмена: запись во временный файл + File.Replace исключает
+            // появление усечённого конфига при сбое питания или аварийном завершении.
+            // Оставшийся после сбоя .tmp перезаписывается при следующей попытке
+            string tempPath = ConfigFile + ".tmp";
+            File.WriteAllLines(tempPath, result, Encoding.UTF8);
+            File.Replace(tempPath, ConfigFile, destinationBackupFileName: null);
 
             Log.Information(
                 "Зашифрованные учётные данные домена записаны в конфигурацию. Class={Class}, Method={Method}",
@@ -515,8 +526,10 @@ internal static class Data
 
 
     /// <summary>
-    /// Инициализирует <see cref="Database"/> из словаря конфигурации
+    /// Асинхронно инициализирует <see cref="Database"/> из словаря конфигурации
     /// и проверяет доступность PostgreSQL через сервисную учётную запись.
+    /// Расшифровка и валидация учётных данных выполняются однократно
+    /// в конструкторе <see cref="Database"/>.
     /// <para>
     /// Если заданы <c>sdbuser</c> и <c>sdbpass</c> — используются они
     /// (значения уже зашифрованы мастер-ключом).
@@ -524,9 +537,9 @@ internal static class Data
     /// записываются в <c>sdbuser</c>/<c>sdbpass</c>, открытые поля очищаются.
     /// </para>
     /// </summary>
-    private static bool TryInitDatabase(Dictionary<string, string> config)
+    private static async Task<bool> TryInitDatabaseAsync(Dictionary<string, string> config)
     {
-        const string method = nameof(TryInitDatabase);
+        const string method = nameof(TryInitDatabaseAsync);
 
         try
         {
@@ -554,7 +567,7 @@ internal static class Data
                 return false;
             }
 
-            // dbsslmode: Disable | Prefer | Require | VerifyCA | VerifyFull (по умолчанию Require)
+            // dbsslmode: Disable | Allow | Prefer | Require | VerifyCA | VerifyFull (по умолчанию Require)
             SslMode sslMode = SslMode.Require;
             if (config.TryGetValue("dbsslmode", out string? sslModeStr) && !string.IsNullOrWhiteSpace(sslModeStr))
             {
@@ -562,7 +575,7 @@ internal static class Data
                     !Enum.IsDefined(typeof(SslMode), sslMode))
                 {
                     Log.Error(
-                        "Некорректное значение dbsslmode={SslModeValue}. Допустимо: Disable, Prefer, Require, VerifyCA, VerifyFull. Class={Class}, Method={Method}",
+                        "Некорректное значение dbsslmode={SslModeValue}. Допустимо: Disable, Allow, Prefer, Require, VerifyCA, VerifyFull. Class={Class}, Method={Method}",
                         sslModeStr, ClassName, method);
                     return false;
                 }
@@ -571,6 +584,16 @@ internal static class Data
             Log.Information(
                 "Режим SSL для БД: {SslMode}. Class={Class}, Method={Method}",
                 sslMode, ClassName, method);
+
+            // Отключённый SSL передаёт пароль сервисной записи БД по сети в открытом виде.
+            // Допустимо только внутри изолированного сегмента сети — предупреждение
+            // симметрично предупреждению о схеме http в Program.cs
+            if (sslMode == SslMode.Disable)
+            {
+                Log.Warning(
+                    "SSL отключён (dbsslmode=Disable): учётные данные БД передаются по сети без шифрования. Рекомендуется Require и выше. Class={Class}, Method={Method}",
+                    ClassName, method);
+            }
 
             byte[]? masterKey = EncryptionService.EnsureMasterKey();
             if (masterKey is null)
@@ -586,8 +609,6 @@ internal static class Data
 
             string encryptedUser;
             string encryptedPass;
-            string plainUser;
-            string plainPass;
 
             bool hasSecure =
                 !string.IsNullOrWhiteSpace(sUser) &&
@@ -595,33 +616,39 @@ internal static class Data
 
             if (hasSecure)
             {
+                // Расшифровка и валидация учётных данных выполняется однократно
+                // в конструкторе Database — здесь повторно не расшифровываем
                 encryptedUser = sUser!.Trim();
                 encryptedPass = sPass!.Trim();
-
-                try
-                {
-                    plainUser = EncryptionService.Decrypt(encryptedUser, masterKey);
-                    plainPass = EncryptionService.Decrypt(encryptedPass, masterKey);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex,
-                        "Не удалось расшифровать sdbuser/sdbpass. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                if (string.IsNullOrWhiteSpace(plainUser) || string.IsNullOrWhiteSpace(plainPass))
-                {
-                    Log.Error(
-                        "После расшифровки sdbuser/sdbpass получены пустые значения. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
 
                 Log.Information(
                     "Учётные данные БД загружены из sdbuser/sdbpass. Class={Class}, Method={Method}",
                     ClassName, method);
+
+                // Остаточные открытые dbuser/dbpass подлежат очистке: секреты
+                // не должны оставаться в конфигурации в незашифрованном виде
+                config.TryGetValue("dbuser", out string? leftoverUser);
+                config.TryGetValue("dbpass", out string? leftoverPass);
+
+                bool hasPlainLeftovers =
+                    !string.IsNullOrWhiteSpace(leftoverUser) ||
+                    !string.IsNullOrWhiteSpace(leftoverPass);
+
+                if (hasPlainLeftovers)
+                {
+                    if (WriteSecureDbCredentials(encryptedUser, encryptedPass))
+                    {
+                        Log.Information(
+                            "Остаточные открытые dbuser/dbpass очищены в конфигурации. Class={Class}, Method={Method}",
+                            ClassName, method);
+                    }
+                    else
+                    {
+                        Log.Warning(
+                            "Не удалось очистить остаточные открытые dbuser/dbpass. Class={Class}, Method={Method}",
+                            ClassName, method);
+                    }
+                }
             }
             else
             {
@@ -636,8 +663,8 @@ internal static class Data
                     return false;
                 }
 
-                plainUser = dbUser.Trim();
-                plainPass = dbPass.Trim();
+                string plainUser = dbUser.Trim();
+                string plainPass = dbPass.Trim();
 
                 try
                 {
@@ -671,8 +698,9 @@ internal static class Data
                 "БД инициализирована. Host={Host}, Port={Port}, Database={Database}, SslMode={SslMode}, User={User}. Class={Class}, Method={Method}",
                 Database.Host, Database.Port, Database.DatabaseName, Database.SslMode, "SystemAccount", ClassName, method);
 
-            // Синхронная обёртка над async-проверкой: на этапе старта допустимо
-            bool isAvailable = Database.ValidateConnectionAsync().GetAwaiter().GetResult();
+            // Проверка доступности выполняется асинхронно: TryInitDatabaseAsync
+            // вызывается из Program.Main через await, без sync-over-async
+            bool isAvailable = await Database.ValidateConnectionAsync().ConfigureAwait(false);
             if (!isAvailable)
             {
                 Log.Error(
@@ -780,7 +808,12 @@ internal static class Data
             if (!hasDbPass)
                 result.Add("dbpass=");
 
-            File.WriteAllLines(ConfigFile, result, Encoding.UTF8);
+            // Атомарная подмена: запись во временный файл + File.Replace исключает
+            // появление усечённого конфига при сбое питания или аварийном завершении.
+            // Оставшийся после сбоя .tmp перезаписывается при следующей попытке
+            string tempPath = ConfigFile + ".tmp";
+            File.WriteAllLines(tempPath, result, Encoding.UTF8);
+            File.Replace(tempPath, ConfigFile, destinationBackupFileName: null);
 
             Log.Information(
                 "Зашифрованные учётные данные БД записаны в конфигурацию. Class={Class}, Method={Method}",

@@ -26,7 +26,7 @@ dbhost=
 dbport=5432
 # Имя базы данных
 dbname=
-# Режим SSL: Disable, Prefer, Require, VerifyCA, VerifyFull (по умолчанию Require)
+# Режим SSL: Disable, Allow, Prefer, Require, VerifyCA, VerifyFull (по умолчанию Require)
 dbsslmode=Require
 # Имя сервисной учётной записи БД (очищается автоматически после шифрования)
 dbuser=

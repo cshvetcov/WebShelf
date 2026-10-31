@@ -39,16 +39,6 @@ internal sealed class Database : IAsyncDisposable, IDisposable
     internal SslMode SslMode { get; }
 
     /// <summary>
-    /// Зашифрованное имя сервисной учётной записи БД (мастер-ключ).
-    /// </summary>
-    private readonly string _encryptedUser;
-
-    /// <summary>
-    /// Зашифрованный пароль сервисной учётной записи БД (мастер-ключ).
-    /// </summary>
-    private readonly string _encryptedPassword;
-
-    /// <summary>
     /// Единый источник соединений на весь срок жизни процесса.
     /// </summary>
     private readonly NpgsqlDataSource _dataSource;
@@ -69,6 +59,9 @@ internal sealed class Database : IAsyncDisposable, IDisposable
     /// <exception cref="ArgumentException">
     /// Возникает, если host, databaseName пустые, порт вне диапазона 1–65535
     /// либо после расшифровки логин/пароль пустые.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Возникает, если мастер-ключ недоступен для расшифровки учётных данных.
     /// </exception>
     internal Database(
         string host,
@@ -99,11 +92,14 @@ internal sealed class Database : IAsyncDisposable, IDisposable
         Port = port;
         DatabaseName = databaseName.Trim();
         SslMode = sslMode;
-        _encryptedUser = encryptedUser.Trim();
-        _encryptedPassword = encryptedPassword.Trim();
 
-        string plainUser = DecryptUser();
-        string plainPass = DecryptPassword();
+        // Мастер-ключ запрашивается один раз: обе расшифровки идут из одного ключа
+        byte[]? masterKey = EncryptionService.EnsureMasterKey();
+        if (masterKey is null)
+            throw new InvalidOperationException("Мастер-ключ недоступен для расшифровки учётных данных БД.");
+
+        string plainUser = EncryptionService.Decrypt(encryptedUser.Trim(), masterKey);
+        string plainPass = EncryptionService.Decrypt(encryptedPassword.Trim(), masterKey);
 
         if (string.IsNullOrWhiteSpace(plainUser) || string.IsNullOrWhiteSpace(plainPass))
         {
@@ -178,7 +174,8 @@ internal sealed class Database : IAsyncDisposable, IDisposable
             command.CommandText = "SELECT 1";
             object? result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
 
-            bool ok = (result is int i && i == 1) || (result is long l && l == 1);
+            // SELECT 1 в PostgreSQL возвращает integer
+            bool ok = result is int i && i == 1;
 
             if (ok)
             {
@@ -225,35 +222,12 @@ internal sealed class Database : IAsyncDisposable, IDisposable
             Password = password,
             SslMode = sslMode,
             Pooling = true,
-            // Таймаут подключения по умолчанию 15 с — достаточно для локальной/корпоративной сети
+            // Таймаут установления соединения — 15 с (задан явно, совпадает
+            // со значением по умолчанию Npgsql): достаточно для локальной/корпоративной сети
             Timeout = 15
         };
 
         return builder.ConnectionString;
-    }
-
-    /// <summary>
-    /// Расшифровывает имя сервисной учётной записи БД.
-    /// </summary>
-    private string DecryptUser()
-    {
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        if (masterKey is null)
-            throw new InvalidOperationException("Мастер-ключ недоступен для расшифровки учётных данных БД.");
-
-        return EncryptionService.Decrypt(_encryptedUser, masterKey);
-    }
-
-    /// <summary>
-    /// Расшифровывает пароль сервисной учётной записи БД.
-    /// </summary>
-    private string DecryptPassword()
-    {
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        if (masterKey is null)
-            throw new InvalidOperationException("Мастер-ключ недоступен для расшифровки учётных данных БД.");
-
-        return EncryptionService.Decrypt(_encryptedPassword, masterKey);
     }
 
     /// <inheritdoc />

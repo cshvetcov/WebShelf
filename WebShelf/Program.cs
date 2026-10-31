@@ -76,7 +76,7 @@ try
         "InstanceId готов. Short={Short}. Class={Class}, Method={Method}",
         Data.InstanceIdShort, "WebShelf.Program", "Main");
 
-    if (!Data.ReadConfig())
+    if (!await Data.ReadConfigAsync())
     {
         Log.Fatal("Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}", "WebShelf.Program", "Main");
         return 1;
