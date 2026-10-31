@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using Npgsql;
 using Serilog;
 using WebShelf.Classes.DC;
@@ -51,6 +52,13 @@ internal sealed class Data
     /// <see langword="null"/>, если конфигурация не загружена или неполная.
     /// </summary>
     internal Database? Database { get; private set; }
+
+    /// <summary>
+    /// X.509-сертификат TLS для прослушивания по https.
+    /// Загружается из файла (ключ <c>certpath</c>) при схеме https;
+    /// <see langword="null"/> при схеме http или ошибке загрузки.
+    /// </summary>
+    internal X509Certificate2? TlsCertificate { get; private set; }
 
     /// <summary>
     /// Полный InstanceId (ULID, 26 символов). Write-once на весь срок жизни процесса.
@@ -129,6 +137,8 @@ internal sealed class Data
             Domain = null;
             Database?.Dispose();
             Database = null;
+            TlsCertificate?.Dispose();
+            TlsCertificate = null;
             Port = null;
             Scheme = null;
 
@@ -163,11 +173,14 @@ internal sealed class Data
             bool portOk = TryInitPort(config);
             bool schemeOk = TryInitScheme(config);
 
-            if (!domainOk || !databaseOk || !portOk || !schemeOk)
+            // Сертификат инициализируется после схемы: нужен только при https
+            bool certificateOk = TryInitCertificate(config);
+
+            if (!domainOk || !databaseOk || !portOk || !schemeOk || !certificateOk)
             {
                 Log.Error(
-                    "Конфигурация загружена частично. DomainOk={DomainOk}, DatabaseOk={DatabaseOk}, PortOk={PortOk}, SchemeOk={SchemeOk}. Class={Class}, Method={Method}",
-                    domainOk, databaseOk, portOk, schemeOk, ClassName, method);
+                    "Конфигурация загружена частично. DomainOk={DomainOk}, DatabaseOk={DatabaseOk}, PortOk={PortOk}, SchemeOk={SchemeOk}, CertificateOk={CertificateOk}. Class={Class}, Method={Method}",
+                    domainOk, databaseOk, portOk, schemeOk, certificateOk, ClassName, method);
                 return false;
             }
 
@@ -186,6 +199,8 @@ internal sealed class Data
             Domain = null;
             Database?.Dispose();
             Database = null;
+            TlsCertificate?.Dispose();
+            TlsCertificate = null;
             Port = null;
             Scheme = null;
             return false;
@@ -426,25 +441,31 @@ internal sealed class Data
     /// Имена ключей конфигурации для пары учётных данных: зашифрованные
     /// (<c>s…user</c>/<c>s…pass</c>) и открытые (<c>…user</c>/<c>…pass</c>),
     /// плюс подписи для логов. Позволяет одной процедуре записи
-    /// <see cref="WriteSecureCredentials"/> обслуживать и домен, и БД.
+    /// <see cref="WriteSecureCredentials"/> обслуживать домен, БД и TLS-сертификат.
+    /// Для секретов без «пользовательской» половины (пароль PFX-сертификата)
+    /// ключи имени передаются как <see langword="null"/>.
     /// </summary>
-    /// <param name="SecureUserKey">Ключ зашифрованного имени учётной записи.</param>
+    /// <param name="SecureUserKey">Ключ зашифрованного имени учётной записи;
+    /// <see langword="null"/>, если пара не содержит имени.</param>
     /// <param name="SecurePassKey">Ключ зашифрованного пароля учётной записи.</param>
-    /// <param name="PlainUserKey">Ключ открытого имени учётной записи (очищается после переноса).</param>
+    /// <param name="PlainUserKey">Ключ открытого имени учётной записи (очищается после переноса);
+    /// <see langword="null"/>, если пара не содержит имени.</param>
     /// <param name="PlainPassKey">Ключ открытого пароля учётной записи (очищается после переноса).</param>
-    /// <param name="OwnerLabel">Подпись владельца учётных данных для логов: "домена", "БД".</param>
+    /// <param name="OwnerLabel">Подпись владельца учётных данных для логов: "домена", "БД", "TLS-сертификата".</param>
     private readonly record struct CredentialKeys(
-        string SecureUserKey,
+        string? SecureUserKey,
         string SecurePassKey,
-        string PlainUserKey,
-        string PlainPassKey,
+        string? PlainUserKey,
+        string? PlainPassKey,
         string OwnerLabel)
     {
         /// <summary>
         /// Подпись пары зашифрованных ключей для логов:
-        /// "sdomainuser/sdomainpass", "sdbuser/sdbpass".
+        /// "sdomainuser/sdomainpass", "sdbuser/sdbpass", "scertpass".
         /// </summary>
-        internal string SecurePairLabel => $"{SecureUserKey}/{SecurePassKey}";
+        internal string SecurePairLabel => SecureUserKey is null
+            ? SecurePassKey
+            : $"{SecureUserKey}/{SecurePassKey}";
     }
 
     /// <summary>Ключи конфигурации сервисной учётной записи домена.</summary>
@@ -455,16 +476,21 @@ internal sealed class Data
     private static readonly CredentialKeys DatabaseCredentialKeys =
         new("sdbuser", "sdbpass", "dbuser", "dbpass", "БД");
 
+    /// <summary>Ключи конфигурации пароля PFX-сертификата TLS (без «пользовательской» половины).</summary>
+    private static readonly CredentialKeys TlsCredentialKeys =
+        new(null, "scertpass", null, "certpass", "TLS-сертификата");
+
     /// <summary>
     /// Записывает зашифрованные учётные данные в Server.conf по общей процедуре:
     /// обновляет значения зашифрованных ключей, очищает открытые ключи,
     /// сохраняет комментарии и порядок остальных строк.
     /// </summary>
     /// <param name="keys">Имена ключей конфигурации и подписи для логов.</param>
-    /// <param name="encryptedUser">Зашифрованное имя учётной записи (Base64).</param>
+    /// <param name="encryptedUser">Зашифрованное имя учётной записи (Base64);
+    /// <see langword="null"/>, если пара не содержит имени (пароль PFX-сертификата).</param>
     /// <param name="encryptedPass">Зашифрованный пароль учётной записи (Base64).</param>
     /// <returns><see langword="true"/> при успешной записи; иначе <see langword="false"/>.</returns>
-    private bool WriteSecureCredentials(CredentialKeys keys, string encryptedUser, string encryptedPass)
+    private bool WriteSecureCredentials(CredentialKeys keys, string? encryptedUser, string encryptedPass)
     {
         const string method = nameof(WriteSecureCredentials);
 
@@ -505,7 +531,8 @@ internal sealed class Data
 
                 string key = trimmed[..eqIndex].Trim();
 
-                if (key.Equals(keys.SecureUserKey, StringComparison.OrdinalIgnoreCase))
+                if (keys.SecureUserKey is not null &&
+                    key.Equals(keys.SecureUserKey, StringComparison.OrdinalIgnoreCase))
                 {
                     result.Add($"{keys.SecureUserKey}={encryptedUser}");
                     hasSecureUser = true;
@@ -515,13 +542,15 @@ internal sealed class Data
                     result.Add($"{keys.SecurePassKey}={encryptedPass}");
                     hasSecurePass = true;
                 }
-                else if (key.Equals(keys.PlainUserKey, StringComparison.OrdinalIgnoreCase))
+                else if (keys.PlainUserKey is not null &&
+                         key.Equals(keys.PlainUserKey, StringComparison.OrdinalIgnoreCase))
                 {
                     // Открытый логин очищаем после переноса в зашифрованный ключ
                     result.Add($"{keys.PlainUserKey}=");
                     hasPlainUser = true;
                 }
-                else if (key.Equals(keys.PlainPassKey, StringComparison.OrdinalIgnoreCase))
+                else if (keys.PlainPassKey is not null &&
+                         key.Equals(keys.PlainPassKey, StringComparison.OrdinalIgnoreCase))
                 {
                     // Открытый пароль очищаем после переноса в зашифрованный ключ
                     result.Add($"{keys.PlainPassKey}=");
@@ -533,13 +562,13 @@ internal sealed class Data
                 }
             }
 
-            if (!hasSecureUser)
+            if (keys.SecureUserKey is not null && !hasSecureUser)
                 result.Add($"{keys.SecureUserKey}={encryptedUser}");
             if (!hasSecurePass)
                 result.Add($"{keys.SecurePassKey}={encryptedPass}");
-            if (!hasPlainUser)
+            if (keys.PlainUserKey is not null && !hasPlainUser)
                 result.Add($"{keys.PlainUserKey}=");
-            if (!hasPlainPass)
+            if (keys.PlainPassKey is not null && !hasPlainPass)
                 result.Add($"{keys.PlainPassKey}=");
 
             // Атомарная подмена: запись во временный файл + File.Replace исключает
@@ -857,6 +886,184 @@ internal sealed class Data
         {
             Log.Error(ex, "Ошибка инициализации схемы. Class={Class}, Method={Method}", ClassName, method);
             Scheme = null;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Загружает TLS-сертификат для схемы https из ключей конфигурации:
+    /// <c>certpath</c> — путь к PFX-файлу, пароль — из <c>scertpass</c> (зашифрованный)
+    /// либо из <c>certpass</c> (открытый, шифруется и переносится в <c>scertpass</c>).
+    /// При схеме http инициализация пропускается (<see langword="true"/>).
+    /// Сертификат обязан содержать закрытый ключ.
+    /// </summary>
+    /// <param name="config">Словарь конфигурации.</param>
+    /// <returns><see langword="true"/>, если сертификат загружен или не требуется; иначе <see langword="false"/>.</returns>
+    private bool TryInitCertificate(Dictionary<string, string> config)
+    {
+        const string method = nameof(TryInitCertificate);
+
+        try
+        {
+            // Сертификат нужен только для прослушивания по https
+            if (!string.Equals(Scheme, "https", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (!config.TryGetValue("certpath", out string? certPath) || string.IsNullOrWhiteSpace(certPath))
+            {
+                Log.Error(
+                    "Отсутствует или пустой ключ certpath (обязателен при scheme=https). Class={Class}, Method={Method}",
+                    ClassName, method);
+                return false;
+            }
+
+            // Относительный путь ищется рядом с бинарниками приложения
+            string resolvedPath = certPath.Trim();
+            if (!Path.IsPathRooted(resolvedPath))
+            {
+                resolvedPath = Path.Combine(AppContext.BaseDirectory, resolvedPath);
+            }
+
+            if (!File.Exists(resolvedPath))
+            {
+                Log.Error(
+                    "Файл TLS-сертификата не найден. Path={Path}. Class={Class}, Method={Method}",
+                    resolvedPath, ClassName, method);
+                return false;
+            }
+
+            byte[]? masterKey = EncryptionService.EnsureMasterKey();
+            if (masterKey is null)
+            {
+                Log.Error(
+                    "Мастер-ключ недоступен при загрузке TLS-сертификата. Class={Class}, Method={Method}",
+                    ClassName, method);
+                return false;
+            }
+
+            string? password = null;
+
+            bool hasSecurePass = config.TryGetValue("scertpass", out string? sPass) &&
+                                 !string.IsNullOrWhiteSpace(sPass);
+            bool hasPlainPass = config.TryGetValue("certpass", out string? pPass) &&
+                                !string.IsNullOrWhiteSpace(pPass);
+
+            if (hasSecurePass)
+            {
+                try
+                {
+                    password = EncryptionService.Decrypt(sPass!.Trim(), masterKey);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex,
+                        "Не удалось расшифровать scertpass. Class={Class}, Method={Method}",
+                        ClassName, method);
+                    return false;
+                }
+
+                // Остаточный открытый certpass подлежит очистке: секреты
+                // не должны оставаться в конфигурации в незашифрованном виде
+                if (hasPlainPass)
+                {
+                    if (WriteSecureCredentials(TlsCredentialKeys, null, sPass!.Trim()))
+                    {
+                        Log.Information(
+                            "Остаточный открытый certpass очищен в конфигурации. Class={Class}, Method={Method}",
+                            ClassName, method);
+                    }
+                    else
+                    {
+                        Log.Warning(
+                            "Не удалось очистить остаточный открытый certpass. Class={Class}, Method={Method}",
+                            ClassName, method);
+                    }
+                }
+            }
+            else if (hasPlainPass)
+            {
+                password = pPass!.Trim();
+
+                try
+                {
+                    string encryptedPass = EncryptionService.Encrypt(password, masterKey);
+                    if (!WriteSecureCredentials(TlsCredentialKeys, null, encryptedPass))
+                    {
+                        Log.Error(
+                            "Не удалось записать scertpass в конфигурацию. Class={Class}, Method={Method}",
+                            ClassName, method);
+                        return false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex,
+                        "Не удалось зашифровать certpass. Class={Class}, Method={Method}",
+                        ClassName, method);
+                    return false;
+                }
+
+                Log.Information(
+                    "Пароль TLS-сертификата зашифрован и сохранён в scertpass. Class={Class}, Method={Method}",
+                    ClassName, method);
+            }
+
+            // Пароль не требуется для PFX без защиты; null допустим
+            X509Certificate2 certificate;
+            try
+            {
+                // X509CertificateLoader (SYSLIB0057): современный способ загрузки PFX
+                certificate = X509CertificateLoader.LoadPkcs12FromFile(resolvedPath, password);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex,
+                    "Не удалось загрузить TLS-сертификат (неверный файл или пароль). Path={Path}. Class={Class}, Method={Method}",
+                    resolvedPath, ClassName, method);
+                return false;
+            }
+
+            // Для серверного TLS обязателен закрытый ключ
+            if (!certificate.HasPrivateKey)
+            {
+                Log.Error(
+                    "Сертификат не содержит закрытого ключа. Path={Path}. Class={Class}, Method={Method}",
+                    resolvedPath, ClassName, method);
+                certificate.Dispose();
+                return false;
+            }
+
+            // Предупреждение о сроке действия не блокирует запуск
+            if (certificate.NotAfter < DateTimeOffset.UtcNow)
+            {
+                Log.Warning(
+                    "Срок действия TLS-сертификата истёк. NotAfter={NotAfter}. Class={Class}, Method={Method}",
+                    certificate.NotAfter, ClassName, method);
+            }
+            else if (certificate.NotAfter < DateTimeOffset.UtcNow.AddDays(14))
+            {
+                Log.Warning(
+                    "Срок действия TLS-сертификата истекает менее чем через 14 дней. NotAfter={NotAfter}. Class={Class}, Method={Method}",
+                    certificate.NotAfter, ClassName, method);
+            }
+
+            TlsCertificate = certificate;
+
+            Log.Information(
+                "TLS-сертификат загружен. Subject={Subject}, Thumbprint={Thumbprint}, NotAfter={NotAfter}. Class={Class}, Method={Method}",
+                certificate.Subject, certificate.Thumbprint, certificate.NotAfter, ClassName, method);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex,
+                "Ошибка инициализации TLS-сертификата. Class={Class}, Method={Method}",
+                ClassName, method);
+            TlsCertificate?.Dispose();
+            TlsCertificate = null;
             return false;
         }
     }

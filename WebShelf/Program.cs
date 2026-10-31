@@ -2,7 +2,9 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.DataProtection;
+using System.Net;
 using System.Security.Claims;
+using System.Security.Cryptography.X509Certificates;
 using Serilog.Events;
 using WebShelf.Classes.DC;
 using WebShelf.Classes.Service;
@@ -107,6 +109,37 @@ try
     Log.Information(
         "Прослушивание {ListenUrl} (Server.conf). Class={Class}, Method={Method}",
         listenUrl, "WebShelf.Program", "Main");
+
+    #region TLS-сертификат для схемы https
+    // При https Kestrel обязан получить сертификат явно — без него запуск невозможен.
+    // Сертификат загружается в Data при чтении конфигурации (certpath + scertpass/certpass).
+    // Явный Listen имеет приоритет над UseUrls — адрес и порт совпадают с listenUrl.
+    if (string.Equals(data.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+    {
+        if (data.TlsCertificate is null)
+        {
+            Log.Fatal(
+                "TLS-сертификат недоступен: прослушивание по https невозможно. Приложение останавливается. Class={Class}, Method={Method}",
+                "WebShelf.Program", "Main");
+            return 1;
+        }
+
+        // Локальная переменная: переносит non-null состояние в замыкание ConfigureKestrel
+        X509Certificate2 tlsCertificate = data.TlsCertificate;
+
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.Listen(IPAddress.Any, data.Port!.Value, listenOptions =>
+            {
+                listenOptions.UseHttps(tlsCertificate);
+            });
+        });
+
+        Log.Information(
+            "TLS-сертификат привязан к Kestrel. Subject={Subject}, NotAfter={NotAfter}. Class={Class}, Method={Method}",
+            tlsCertificate.Subject, tlsCertificate.NotAfter, "WebShelf.Program", "Main");
+    }
+    #endregion
 
     #region Постоянное хранение ключей Data Protection
     // Ключи Data Protection шифруют билет аутентификационной куки и antiforgery-токены.
@@ -214,8 +247,9 @@ catch (Exception ex)
 }
 finally
 {
-    // Освобождение пула соединений PostgreSQL до закрытия логов
+    // Освобождение пула соединений PostgreSQL и TLS-сертификата до закрытия логов
     data.Database?.Dispose();
+    data.TlsCertificate?.Dispose();
     InstanceLock.Release();
     Log.CloseAndFlush();
 }
