@@ -206,6 +206,8 @@ catch (Exception ex)
 }
 finally
 {
+    // Освобождение пула соединений PostgreSQL до закрытия логов
+    Data.Database?.Dispose();
     InstanceLock.Release();
     Log.CloseAndFlush();
 }

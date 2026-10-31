@@ -4,21 +4,17 @@
     "type": "split",
     "children": [
       {
-        "id": "82cd6caede23eaa9",
+        "id": "a9baa21e3e1125e9",
         "type": "tabs",
         "children": [
           {
-            "id": "201aae43d6519136",
+            "id": "5c46698febe5b1f6",
             "type": "leaf",
             "state": {
-              "type": "markdown",
-              "state": {
-                "file": "Решения в проекте/Пользователи.md",
-                "mode": "source",
-                "source": false
-              },
+              "type": "empty",
+              "state": {},
               "icon": "lucide-file",
-              "title": "Пользователи"
+              "title": "Новая вкладка"
             }
           }
         ]
@@ -188,8 +184,9 @@
       "bases:Создать новую базу": false
     }
   },
-  "active": "201aae43d6519136",
+  "active": "5c46698febe5b1f6",
   "lastOpenFiles": [
+    "file:C:/Users/cshve/AGENTS.md",
     "Описание.md",
     "Решения в проекте/Группы пользователей.md",
     "Решения в проекте/Пользователи.md",
