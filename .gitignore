@@ -486,3 +486,23 @@ Server.conf
 
 # Ключи Data Protection (создаются приложением рядом с бинарниками, защищены DPAPI)
 keys/
+
+# Obsidian: служебные файлы хранилища WebShelfDocs (состояние UI, кэш, корзина)
+WebShelfDocs/.obsidian/workspace.json
+WebShelfDocs/.obsidian/workspace-mobile.json
+WebShelfDocs/.obsidian/workspace.json.bak
+WebShelfDocs/.obsidian/cache
+WebShelfDocs/.trash/
+
+# Остатки от применения патчей
+*.rej
+*.orig
+
+# Приватные ключи и сертификаты — никогда не должны попадать в репозиторий
+*.pem
+*.key
+
+# Варианты env-файлов (если появятся docker/скрипты развертывания)
+.env.*
+!.env.example
+
