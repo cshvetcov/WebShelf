@@ -1,0 +1,7 @@
+{
+  /* Новая инфраструктура dotnet test (Microsoft.Testing.Platform) —
+     обязательна для xunit.v3 начиная с .NET 10 SDK */
+  "test": {
+    "runner": "Microsoft.Testing.Platform"
+  }
+}

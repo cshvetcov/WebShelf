@@ -41,4 +41,9 @@
     <Using Include="Serilog" />
   </ItemGroup>
 
+  <!-- Доступ internal-типов из проекта юнит-тестов -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="WebShelf.Tests" />
+  </ItemGroup>
+
 </Project>
