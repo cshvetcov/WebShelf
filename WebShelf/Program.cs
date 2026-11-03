@@ -89,6 +89,31 @@ try
         return 1;
     }
 
+    // --- Группы безопасности AD ---
+    // После считывания конфигурации (мастер-ключ, инициализация домена, проверка
+    // сервисной учётной записи): 1) формирование списка необходимых групп из шаблонов
+    // имён ({InstanceIdShort} заменяется коротким префиксом InstanceId);
+    // 2) проверка существования групп и создание отсутствующих от имени сервисной УЗ.
+    // При любой ошибке приложение завершается — без необходимых групп оно не работает.
+    // После успешного чтения конфигурации домен гарантированно инициализирован
+    Domain domain = data.Domain!;
+
+    if (!domain.FillRequiredGroupsFromTemplates(Domain.GroupNameTemplates))
+    {
+        Log.Fatal(
+            "Не удалось сформировать список необходимых групп безопасности AD. Приложение останавливается. Class={Class}, Method={Method}",
+            "WebShelf.Program", "Main");
+        return 1;
+    }
+
+    if (!domain.EnsureRequiredGroupsExist())
+    {
+        Log.Fatal(
+            "Не удалось создать необходимые группы безопасности AD. Приложение останавливается. Class={Class}, Method={Method}",
+            "WebShelf.Program", "Main");
+        return 1;
+    }
+
     // Предупреждение о небезопасной схеме: при http cookie аутентификации
     // передаются без флага Secure и могут быть перехвачены в канале связи.
     if (string.Equals(data.Scheme, "http", StringComparison.OrdinalIgnoreCase))
