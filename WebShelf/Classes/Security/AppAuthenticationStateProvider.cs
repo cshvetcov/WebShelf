@@ -13,6 +13,8 @@ namespace WebShelf.Classes.Security;
 /// При смене роли (push из <see cref="RoleRefreshService"/> через
 /// <see cref="RoleChangeNotifier"/>) состояние обновляется уведомлением Blazor —
 /// AuthorizeView и лента перерисовываются без перезагрузки страницы.
+/// Подписка на события ведётся по имени учётной записи своей цепочки
+/// и снимается при её закрытии (<see cref="Dispose"/>).
 /// </summary>
 internal sealed class AppAuthenticationStateProvider :
     AuthenticationStateProvider,
@@ -31,6 +33,9 @@ internal sealed class AppAuthenticationStateProvider :
     /// <summary>Актуальное состояние: личность + свежая роль. Обновляется push-ом.</summary>
     private Task<AuthenticationState>? _current;
 
+    /// <summary>Подписка на события смены роли пользователя цепочки; null до построения состояния.</summary>
+    private IDisposable? _subscription;
+
     /// <summary>
     /// Конструктор объявлен <see langword="public"/> (сам класс остаётся internal):
     /// контейнер DI находит только public-конструкторы.
@@ -43,8 +48,6 @@ internal sealed class AppAuthenticationStateProvider :
         _resolver = roleResolver;
         _notifier = changeNotifier;
         _httpContextAccessor = httpContextAccessor;
-
-        _notifier.RoleChanged += OnRoleChanged;
     }
 
     /// <summary>
@@ -92,9 +95,9 @@ internal sealed class AppAuthenticationStateProvider :
     }
 
     /// <summary>
-    /// Строит состояние: личность из cookie + свежая роль из AD.
-    /// Пользователь без группы Users переводится в анонимное состояние —
-    /// доступ к системе запрещён целиком (fail-secure).
+    /// Строит состояние: личность из cookie + свежая роль из AD, затем подписывается
+    /// на события смены роли этого пользователя. Пользователь без группы Users
+    /// переводится в анонимное состояние — доступ к системе запрещён целиком (fail-secure).
     /// </summary>
     private async Task<AuthenticationState> BuildAsync()
     {
@@ -135,6 +138,14 @@ internal sealed class AppAuthenticationStateProvider :
                 return seed;
             }
 
+            // Подписка на события смены роли этого пользователя: опрос идёт
+            // от имени singleton-службы, провайдер цепочки — единственный её подписчик.
+            // Подписка ставится один раз и снимается при закрытии цепочки (Dispose)
+            if (_subscription is null)
+            {
+                _subscription = _notifier.Subscribe(username, OnRoleChanged);
+            }
+
             RoleResolution? resolution = _resolver.Resolve(username);
             if (resolution is null)
             {
@@ -167,15 +178,17 @@ internal sealed class AppAuthenticationStateProvider :
 
     /// <summary>
     /// Обработка push-события из фонового опроса. Вызывается в потоке службы,
-    /// поэтому состояние подменяется атомарно, без ожидания.
+    /// поэтому состояние подменяется атомарно, без ожидания. Потеря группы Users —
+    /// принудительный выход: цепочка переводится в анонимное состояние.
     /// </summary>
-    private void OnRoleChanged(object? sender, RoleChange change)
+    /// <param name="resolution">Новое состояние ролей пользователя цепочки.</param>
+    private void OnRoleChanged(RoleResolution resolution)
     {
         const string method = nameof(OnRoleChanged);
 
         try
         {
-            if (change.Resolution is null)
+            if (!resolution.HasUsersGroup)
             {
                 // Принудительный выход: потеряна группа Users. Cookie остаётся
                 // валидным до своего срока, но интерактивные страницы считают
@@ -197,22 +210,16 @@ internal sealed class AppAuthenticationStateProvider :
             }
 
             AuthenticationState state = current.GetAwaiter().GetResult();
-            string? username = state.User.Identity?.Name;
-            if (!string.Equals(username, change.Username, StringComparison.OrdinalIgnoreCase))
-            {
-                // Событие чужого пользователя — эта цепочка его не обновляет
-                return;
-            }
 
             // Смена роли: пересобираем клеймы и уведомляем Blazor —
             // AuthorizeView и лента перерисовываются без перезагрузки страницы
-            _current = Task.FromResult(new AuthenticationState(RebuildPrincipal(state.User, change.Resolution)));
+            _current = Task.FromResult(new AuthenticationState(RebuildPrincipal(state.User, resolution)));
             NotifyAuthenticationStateChanged(_current!);
 
             Log.Information(
                 "Роль обновлена в цепочке. OldRole={Old}, NewRole={New}. Username={User}. Class={Class}, Method={Method}",
                 state.User.FindFirst(ClaimTypes.Role)?.Value ?? "—",
-                change.Resolution.Role.SystemName,
+                resolution.EffectiveRole.SystemName,
                 "UserAccount", ClassName, method);
         }
         catch (Exception ex)
@@ -228,15 +235,15 @@ internal sealed class AppAuthenticationStateProvider :
     private static ClaimsPrincipal RebuildPrincipal(ClaimsPrincipal seedUser, RoleResolution resolution)
     {
         List<Claim> claims = seedUser.Claims
-            .Where(claim => claim.Type != ClaimTypes.Role && claim.Type != AppRoleCatalog.MatchedRolesClaimType)
+            .Where(claim => claim.Type != ClaimTypes.Role && claim.Type != ClaimsPrincipalExtensions.MatchedRolesClaimType)
             .ToList();
 
-        claims.Add(new Claim(ClaimTypes.Role, resolution.Role.SystemName));
+        claims.Add(new Claim(ClaimTypes.Role, resolution.EffectiveRole.SystemName));
 
         if (resolution.MatchedRoles.Count > 0)
         {
             claims.Add(new Claim(
-                AppRoleCatalog.MatchedRolesClaimType,
+                ClaimsPrincipalExtensions.MatchedRolesClaimType,
                 string.Join(",", resolution.MatchedRoles.Select(role => role.SystemName))));
         }
 
@@ -251,10 +258,12 @@ internal sealed class AppAuthenticationStateProvider :
     }
 
     /// <summary>
-    /// Отписка от событий: цепочка закрыта — провайдер больше не нужен.
+    /// Снимает подписку на события смены роли: цепочка закрыта —
+    /// провайдер больше не нужен.
     /// </summary>
     public void Dispose()
     {
-        _notifier.RoleChanged -= OnRoleChanged;
+        _subscription?.Dispose();
+        _subscription = null;
     }
 }

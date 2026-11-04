@@ -5,9 +5,11 @@ namespace WebShelf.Classes.Security;
 /// <summary>
 /// Фоновая служба опроса ролевых групп AD (вариант 2): с заданным интервалом
 /// пересчитывает роль каждого отслеживаемого пользователя свежим запросом
-/// (в обход TTL) и рассылает изменения в активные цепочки через
-/// <see cref="RoleChangeNotifier"/>. Потеря группы Users — принудительный выход.
-/// При недоступности AD пользователи пропускаются: массовый выход не выполняется.
+/// (в обход TTL) и рассылает изменения в активные цепочки этого пользователя
+/// через <see cref="RoleChangeNotifier"/>. Потеря группы Users — принудительный
+/// выход: подписчик получает состояние без группы доступа и переводит цепочку
+/// в анонимное состояние. При недоступности AD пользователи пропускаются:
+/// массовый выход не выполняется.
 /// </summary>
 internal sealed class RoleRefreshService : BackgroundService
 {
@@ -92,25 +94,15 @@ internal sealed class RoleRefreshService : BackgroundService
                     continue;
                 }
 
-                if (!fresh.HasUsersGroup)
+                // Событие уходит только при изменении: смена роли либо
+                // возврат/потеря группы Users. Повторных рассылок на устойчивое
+                // состояние нет; решение о действии принимает подписчик
+                // (обновить клеймы либо принудительный выход — потеря Users)
+                if (before is null
+                    || before.EffectiveRole.SystemName != fresh.EffectiveRole.SystemName
+                    || before.HasUsersGroup != fresh.HasUsersGroup)
                 {
-                    // Потеря группы Users — принудительный выход из цепочек.
-                    // Событие поднимается один раз на переход: дальше кэш уже
-                    // хранит HasUsersGroup=false и повторных рассылок нет
-                    if (before is null || before.HasUsersGroup)
-                    {
-                        _notifier.Raise(new RoleChange(username, null, RoleChange.ReasonUsersGroupLost));
-                    }
-
-                    continue;
-                }
-
-                // Смена роли (или возврат Users после принудительного выхода):
-                // сравнение и по роли, и по членству в Users
-                if (before is not null &&
-                    (before.Role.SystemName != fresh.Role.SystemName || before.HasUsersGroup != fresh.HasUsersGroup))
-                {
-                    _notifier.Raise(new RoleChange(username, fresh, RoleChange.ReasonRoleChanged));
+                    _notifier.Notify(username, fresh);
                 }
             }
         }

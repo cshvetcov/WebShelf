@@ -5,8 +5,9 @@ namespace WebShelf.Tests;
 
 /// <summary>
 /// Тесты фонового опроса ролевых групп (вариант 2): PollOnce вызывается напрямую,
-/// без задержек ExecuteAsync. Проверяются рассылка событий смены роли,
-/// принудительный выход при потере группы Users и поведение при сбое AD.
+/// без задержек ExecuteAsync. Проверяются рассылка событий смены роли
+/// подписчику конкретного пользователя, принудительный выход при потере группы
+/// Users (событие без группы доступа) и поведение при сбое AD.
 /// </summary>
 public class RoleRefreshServiceTests
 {
@@ -16,11 +17,11 @@ public class RoleRefreshServiceTests
     /// <summary>Собирает события нотификатора для проверок.</summary>
     private sealed class EventRecorder
     {
-        public List<RoleChange> Events { get; } = [];
+        public List<RoleResolution> Events { get; } = [];
 
-        public void OnRoleChanged(object? sender, RoleChange change)
+        public void OnRoleChanged(RoleResolution resolution)
         {
-            Events.Add(change);
+            Events.Add(resolution);
         }
     }
 
@@ -42,7 +43,9 @@ public class RoleRefreshServiceTests
 
         RoleChangeNotifier notifier = new();
         EventRecorder recorder = new();
-        notifier.RoleChanged += recorder.OnRoleChanged;
+        // Подписка на события конкретного пользователя — как это делает
+        // провайдер состояния аутентификации активной цепочки
+        notifier.Subscribe("ivanov", recorder.OnRoleChanged);
 
         RoleRefreshService service = new(resolver, notifier, options);
 
@@ -50,7 +53,7 @@ public class RoleRefreshServiceTests
     }
 
     /// <summary>
-    /// Смена роли между опросами — событие role-changed с новой ролью.
+    /// Смена роли между опросами — событие с новым состоянием ролей.
     /// </summary>
     [Fact]
     public void PollOnce_RoleChanged_RaisesEvent()
@@ -65,12 +68,9 @@ public class RoleRefreshServiceTests
         ad.SetUserGroups("ivanov", $"WebShelf-{Id}-Users", $"WebShelf-{Id}-GIP");
         service.PollOnce();
 
-        RoleChange change = Assert.Single(recorder.Events);
-        Assert.Equal("ivanov", change.Username);
-        Assert.Equal(RoleChange.ReasonRoleChanged, change.Reason);
-        Assert.NotNull(change.Resolution);
-        Assert.Same(AppRoleCatalog.GIP, change.Resolution.Role);
-        Assert.True(change.Resolution.HasUsersGroup);
+        RoleResolution change = Assert.Single(recorder.Events);
+        Assert.Same(RoleCatalog.Gip, change.EffectiveRole);
+        Assert.True(change.HasUsersGroup);
     }
 
     /// <summary>
@@ -90,8 +90,9 @@ public class RoleRefreshServiceTests
     }
 
     /// <summary>
-    /// Потеря группы Users — принудительный выход: событие users-group-lost
-    /// с null-резолюцией; повторный цикл не дублирует событие.
+    /// Потеря группы Users — принудительный выход: событие с состоянием без группы
+    /// доступа (провайдер цепочки переводит пользователя в анонимное состояние);
+    /// повторный цикл не дублирует событие.
     /// </summary>
     [Fact]
     public void PollOnce_UsersGroupLost_ForcedLogoutOnce()
@@ -107,14 +108,14 @@ public class RoleRefreshServiceTests
         service.PollOnce();
         service.PollOnce();
 
-        RoleChange change = Assert.Single(recorder.Events);
-        Assert.Equal(RoleChange.ReasonUsersGroupLost, change.Reason);
-        Assert.Null(change.Resolution);
+        RoleResolution change = Assert.Single(recorder.Events);
+        Assert.False(change.HasUsersGroup);
+        Assert.True(change.IsGuest);
     }
 
     /// <summary>
-    /// Смена роли без Users (пользователь вне группы доступа) — принудительный выход,
-    /// а не «смена роли на Гостя».
+    /// Смена роли без Users (пользователь вне группы доступа) — событие без группы
+    /// доступа: провайдер выполнит принудительный выход, а не «смену роли».
     /// </summary>
     [Fact]
     public void PollOnce_RoleChangedButNoUsers_ForcedLogout()
@@ -129,9 +130,9 @@ public class RoleRefreshServiceTests
         ad.SetUserGroups("ivanov", $"WebShelf-{Id}-Manager");
         service.PollOnce();
 
-        RoleChange change = Assert.Single(recorder.Events);
-        Assert.Equal(RoleChange.ReasonUsersGroupLost, change.Reason);
-        Assert.Null(change.Resolution);
+        RoleResolution change = Assert.Single(recorder.Events);
+        Assert.False(change.HasUsersGroup);
+        Assert.Equal(AppRoleId.Manager, change.EffectiveRole.Id);
     }
 
     /// <summary>
@@ -154,10 +155,10 @@ public class RoleRefreshServiceTests
         service.PollOnce();
 
         Assert.Equal(2, recorder.Events.Count);
-        Assert.Equal(RoleChange.ReasonUsersGroupLost, recorder.Events[0].Reason);
-        Assert.Equal(RoleChange.ReasonRoleChanged, recorder.Events[1].Reason);
-        Assert.NotNull(recorder.Events[1].Resolution);
-        Assert.True(recorder.Events[1].Resolution.HasUsersGroup);
+        // Первое событие — потеря Users (принудительный выход),
+        // второе — возврат Users (провайдер вернёт пользователя в систему)
+        Assert.False(recorder.Events[0].HasUsersGroup);
+        Assert.True(recorder.Events[1].HasUsersGroup);
     }
 
     /// <summary>

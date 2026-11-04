@@ -58,9 +58,9 @@ internal class Domain : IAdGroupSource
     /// <summary>
     /// Имена групп безопасности, необходимых для функционирования WebShelf.
     /// Формируется при старте приложения методом <see cref="FillRequiredGroupsFromTemplates"/>
-    /// из шаблонов, передаваемых вызывающей стороной (строятся по каталогу ролей —
-    /// <c>AppRoleCatalog.GetGroupNameTemplates()</c>). До формирования проверка
-    /// и создание групп не выполняются.
+    /// из шаблонов, передаваемых вызывающей стороной (группа доступа Users — шаблон
+    /// <see cref="Domain"/>, ролевые группы — <c>RoleCatalog.BuildGroupNameTemplates()</c>).
+    /// До формирования проверка и создание групп не выполняются.
     /// </summary>
     private readonly List<string> _requiredGroups = [];
 
@@ -68,6 +68,13 @@ internal class Domain : IAdGroupSource
     /// Заполнитель короткого префикса InstanceId в шаблонах имён групп.
     /// </summary>
     internal const string InstanceIdShortPlaceholder = "{InstanceIdShort}";
+
+    /// <summary>
+    /// Суффикс группы доступа (не роль): членство в WebShelf-{InstanceIdShort}-Users
+    /// обязательно для входа в систему. Шаблон группы доступа хранится здесь —
+    /// Users не входит в каталог ролевых групп.
+    /// </summary>
+    internal const string UsersGroupSuffix = "Users";
 
     /// <summary>
     /// Сформированный список имен групп безопасности, необходимых для функционирования
@@ -292,7 +299,7 @@ internal class Domain : IAdGroupSource
                 return true;
             }
 
-            string usersGroupName = $"WebShelf-{_instanceIdShort}-Users";
+            string usersGroupName = $"WebShelf-{_instanceIdShort}-{UsersGroupSuffix}";
             string serviceUser = GetDecryptedUser();
             string servicePassword = GetDecryptedPassword();
 
@@ -599,11 +606,13 @@ internal class Domain : IAdGroupSource
     /// Возвращает расширенное имя группы WebShelf по суффиксу: имя строится
     /// напрямую из <paramref name="suffix"/> и короткого префикса InstanceId
     /// текущего экземпляра, без обращения к AD. Реализация <see cref="IAdGroupSource"/>
-    /// для резолвера ролей.
+    /// для резолвера ролей. Объявлен <see langword="public"/> (класс остаётся
+    /// internal): неявная реализация интерфейса требует публичный доступ —
+    /// наружу сборки метод не виден.
     /// </summary>
     /// <param name="suffix">Суффикс группы: "Users" либо суффикс ролевой группы.</param>
     /// <returns>Имя вида WebShelf-{InstanceIdShort}-{suffix}; <see langword="null"/> при ошибке.</returns>
-    internal string? GetExpandedGroupName(string suffix)
+    public string? GetExpandedGroupName(string suffix)
     {
         const string method = nameof(GetExpandedGroupName);
 
@@ -631,6 +640,8 @@ internal class Domain : IAdGroupSource
     /// (вложенные группы не учитываются — аналогично проверке группы Users при входе).
     /// Для каждой группы берётся sAMAccountName, при его отсутствии — Name.
     /// Реализация <see cref="IAdGroupSource"/> для резолвера ролей.
+    /// Объявлен <see langword="public"/> (класс остаётся internal): неявная
+    /// реализация интерфейса требует публичный доступ — наружу сборки метод не виден.
     /// </summary>
     /// <param name="samAccountName">Имя учётной записи (sAMAccountName, без доменной части).</param>
     /// <returns>
@@ -638,7 +649,7 @@ internal class Domain : IAdGroupSource
     /// группе (в том числе пользователь удалён из AD); <see langword="null"/> — ошибка
     /// обращения к AD (резолвер в этом случае не меняет известное состояние).
     /// </returns>
-    internal IReadOnlyList<string>? GetUserGroupNames(string samAccountName)
+    public IReadOnlyList<string>? GetUserGroupNames(string samAccountName)
     {
         const string method = nameof(GetUserGroupNames);
 

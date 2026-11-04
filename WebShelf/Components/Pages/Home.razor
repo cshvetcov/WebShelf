@@ -98,7 +98,7 @@
 
             // Отображаемое имя эффективной роли — по клейму Role из состояния
             string? roleSystemName = authState.User.FindFirst(ClaimTypes.Role)?.Value;
-            AppRole? role = AppRoleCatalog.FindBySystemName(roleSystemName);
+            AppRole? role = RoleCatalog.TryGetBySystemName(roleSystemName);
             currentRole = role?.DisplayName ?? string.Empty;
         }
         catch (Exception ex)

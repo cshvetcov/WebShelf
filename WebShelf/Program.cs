@@ -93,16 +93,33 @@ try
 
     // --- Группы безопасности AD ---
     // После считывания конфигурации (мастер-ключ, инициализация домена, проверка
-    // сервисной учётной записи): 1) формирование списка необходимых групп из шаблонов
-    // имён — состав задаётся каталогом ролей (AppRoleCatalog): группа доступа Users
-    // и по одной группе на каждую роль с суффиксом (под Гостя группа не создаётся);
+    // сервисной учётной записи): 0) самопроверка каталога ролей — единый источник
+    // истины о составе ролей и группах; 1) формирование списка необходимых групп из
+    // шаблонов имён — группа доступа Users (шаблон хранится в Domain) и шаблоны
+    // ролевых групп из каталога ролей (RoleCatalog, под Гостя группа не создаётся);
     // {InstanceIdShort} заменяется коротким префиксом InstanceId;
     // 2) проверка существования групп и создание отсутствующих от имени сервисной УЗ.
     // При любой ошибке приложение завершается — без необходимых групп оно не работает.
     // После успешного чтения конфигурации домен гарантированно инициализирован
     Domain domain = data.Domain!;
 
-    if (!domain.FillRequiredGroupsFromTemplates(AppRoleCatalog.GetGroupNameTemplates()))
+    if (!RoleCatalog.Validate())
+    {
+        Log.Fatal(
+            "Каталог ролей неконсистентен (дубликаты или пустые значения). Приложение останавливается. Class={Class}, Method={Method}",
+            "WebShelf.Program", "Main");
+        return 1;
+    }
+
+    List<string> groupNameTemplates =
+    [
+        // Группа доступа Users — не роль: шаблон хранится в Domain
+        $"WebShelf-{Domain.InstanceIdShortPlaceholder}-{Domain.UsersGroupSuffix}",
+        // Шаблоны ролевых групп — по одной на каждую роль каталога (Гость исключён)
+        .. RoleCatalog.BuildGroupNameTemplates()
+    ];
+
+    if (!domain.FillRequiredGroupsFromTemplates(groupNameTemplates))
     {
         Log.Fatal(
             "Не удалось сформировать список необходимых групп безопасности AD. Приложение останавливается. Class={Class}, Method={Method}",
@@ -122,7 +139,7 @@ try
     // Проверяется после создания групп: если в группе администраторов нет ни одного
     // участника — предупреждение в лог (запуск не блокируется: группа могла быть
     // только что создана и ждёт первого участника).
-    string? adminGroup = domain.GetExpandedGroupName(AppRoleCatalog.Administrator.GroupSuffix!);
+    string? adminGroup = domain.GetExpandedGroupName(RoleCatalog.Administrator.GroupSuffix!);
     if (adminGroup is not null)
     {
         List<string>? adminMembers = domain.GetGroupMemberNames(adminGroup);
@@ -423,14 +440,14 @@ static async Task<IResult> LoginAsync(
             new(ClaimTypes.NameIdentifier, samAccountName),
             // Эффективная роль — транспорт в cookie на момент входа;
             // источник истины всегда AD (резолвер обновляет роль в цепочке)
-            new(ClaimTypes.Role, roleState.Role.SystemName)
+            new(ClaimTypes.Role, roleState.EffectiveRole.SystemName)
         };
 
         if (roleState.MatchedRoles.Count > 0)
         {
             // Диагностический клейм: все совпавшие роли через запятую
             claims.Add(new Claim(
-                AppRoleCatalog.MatchedRolesClaimType,
+                ClaimsPrincipalExtensions.MatchedRolesClaimType,
                 string.Join(",", roleState.MatchedRoles.Select(role => role.SystemName))));
         }
 

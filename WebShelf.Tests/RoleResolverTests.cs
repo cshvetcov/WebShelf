@@ -45,7 +45,7 @@ public class RoleResolverTests
 
         Assert.NotNull(result);
         Assert.True(result.HasUsersGroup);
-        Assert.Same(AppRoleCatalog.Manager, result.Role);
+        Assert.Same(RoleCatalog.Manager, result.EffectiveRole);
         Assert.Equal(
             ["Manager", "GIP", "Executor"],
             result.MatchedRoles.Select(role => role.SystemName).ToArray());
@@ -65,7 +65,7 @@ public class RoleResolverTests
 
         Assert.NotNull(result);
         Assert.True(result.HasUsersGroup);
-        Assert.Same(AppRoleCatalog.Guest, result.Role);
+        Assert.Same(RoleCatalog.Guest, result.EffectiveRole);
         Assert.Empty(result.MatchedRoles);
     }
 
@@ -83,7 +83,7 @@ public class RoleResolverTests
 
         Assert.NotNull(result);
         Assert.False(result.HasUsersGroup);
-        Assert.Same(AppRoleCatalog.Guest, result.Role);
+        Assert.Same(RoleCatalog.Guest, result.EffectiveRole);
     }
 
     /// <summary>
@@ -102,7 +102,7 @@ public class RoleResolverTests
 
         Assert.Equal(1, ad.GetUserGroupNamesCalls);
         Assert.NotNull(second);
-        Assert.Same(AppRoleCatalog.Manager, second.Role);
+        Assert.Same(RoleCatalog.Manager, second.EffectiveRole);
     }
 
     /// <summary>
@@ -126,7 +126,7 @@ public class RoleResolverTests
 
         Assert.Equal(2, ad.GetUserGroupNamesCalls);
         Assert.NotNull(fresh);
-        Assert.Same(AppRoleCatalog.Director, fresh.Role);
+        Assert.Same(RoleCatalog.Director, fresh.EffectiveRole);
     }
 
     /// <summary>
@@ -148,7 +148,7 @@ public class RoleResolverTests
         RoleResolution? stale = resolver.Resolve("ivanov");
 
         Assert.NotNull(stale);
-        Assert.Same(AppRoleCatalog.Manager, stale.Role);
+        Assert.Same(RoleCatalog.Manager, stale.EffectiveRole);
     }
 
     /// <summary>
@@ -191,16 +191,16 @@ public class RoleResolverTests
         RoleResolver resolver = CreateResolver(ad, time, ttlSeconds: 300);
 
         RoleResolution? first = resolver.ResolveFresh("ivanov");
-        Assert.Same(AppRoleCatalog.Executor, first?.Role);
+        Assert.Same(RoleCatalog.Executor, first?.EffectiveRole);
 
         // Смена роли до истечения TTL: ResolveFresh обязан увидеть её сразу
         ad.SetUserGroups("ivanov", $"WebShelf-{Id}-Users", $"WebShelf-{Id}-GIP");
         RoleResolution? fresh = resolver.ResolveFresh("ivanov");
 
-        Assert.Same(AppRoleCatalog.GIP, fresh?.Role);
+        Assert.Same(RoleCatalog.Gip, fresh?.EffectiveRole);
 
         // И кэш теперь хранит свежее значение
-        Assert.Same(AppRoleCatalog.GIP, resolver.Peek("ivanov")?.Role);
+        Assert.Same(RoleCatalog.Gip, resolver.Peek("ivanov")?.EffectiveRole);
     }
 
     /// <summary>
@@ -218,7 +218,7 @@ public class RoleResolverTests
         ad.AdUnavailable = true;
 
         Assert.Null(resolver.ResolveFresh("ivanov"));
-        Assert.Same(AppRoleCatalog.Manager, resolver.Peek("ivanov")?.Role);
+        Assert.Same(RoleCatalog.Manager, resolver.Peek("ivanov")?.EffectiveRole);
     }
 
     /// <summary>
@@ -255,6 +255,6 @@ public class RoleResolverTests
         RoleResolution? second = resolver.Resolve("IVANOV");
 
         Assert.Equal(1, ad.GetUserGroupNamesCalls);
-        Assert.Same(AppRoleCatalog.Manager, second?.Role);
+        Assert.Same(RoleCatalog.Manager, second?.EffectiveRole);
     }
 }

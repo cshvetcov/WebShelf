@@ -4,20 +4,14 @@ using WebShelf.Classes.DC;
 namespace WebShelf.Classes.Security;
 
 /// <summary>
-/// Результат вычисления роли пользователя по его прямым группам AD.
-/// </summary>
-/// <param name="Role">Эффективная роль: старшая из совпавших; Гость, если совпадений нет.</param>
-/// <param name="MatchedRoles">Все совпавшие ролевые группы по возрастанию старшинства.</param>
-/// <param name="HasUsersGroup">Членство в группе доступа WebShelf-{InstanceIdShort}-Users.</param>
-internal sealed record RoleResolution(AppRole Role, IReadOnlyList<AppRole> MatchedRoles, bool HasUsersGroup);
-
-/// <summary>
 /// Вычисляет роль пользователя по прямым группам AD: вариант 1 — TTL-кэш,
 /// вариант 3 — свежее вычисление в обход кэша (вход, критичные операции).
 /// Источник истины — всегда AD; клейм роли в cookie — только транспорт
 /// на момент входа. При недоступности AD отдаёт последнее известное значение
 /// (stale-if-error); при отсутствии кэша — <see langword="null"/>
 /// (вход в этом случае отклоняется — fail-secure).
+/// Результат вычисления — <see cref="RoleResolution"/> (создаётся здесь
+/// и в <see cref="RoleCatalog"/>, состав ролей берётся из каталога).
 /// </summary>
 internal sealed class RoleResolver
 {
@@ -74,7 +68,7 @@ internal sealed class RoleResolver
         // подстановка InstanceIdShort не требует обращения к AD.
         Dictionary<string, AppRole> map = new(StringComparer.OrdinalIgnoreCase);
 
-        foreach (AppRole role in AppRoleCatalog.All)
+        foreach (AppRole role in RoleCatalog.AdRoles)
         {
             if (role.GroupSuffix is null)
             {
@@ -95,7 +89,7 @@ internal sealed class RoleResolver
             map[groupName] = role;
         }
 
-        string? usersGroupName = adGroupSource.GetExpandedGroupName(AppRoleCatalog.UsersGroupSuffix);
+        string? usersGroupName = adGroupSource.GetExpandedGroupName(Domain.UsersGroupSuffix);
         if (usersGroupName is null)
         {
             Log.Error(
@@ -272,7 +266,7 @@ internal sealed class RoleResolver
         // Несколько ролей — действует старшая (наименьший индекс старшинства);
         // список хранится по возрастанию старшинства
         matched.Sort((left, right) => left.SeniorityIndex - right.SeniorityIndex);
-        AppRole effective = matched.Count == 0 ? AppRoleCatalog.Guest : matched[0];
+        AppRole effective = matched.Count == 0 ? RoleCatalog.Guest : matched[0];
 
         RoleResolution resolution = new RoleResolution(effective, matched, groupNames.Contains(_usersGroupName));
         _cache[username] = new CacheEntry(resolution, _timeProvider.GetUtcNow());
