@@ -274,6 +274,12 @@ try
     // Вариант 3: свежая LDAP-проверка в обход кэша — при входе и критичных операциях.
     // Конструкторы всех сервисов объявлены public (классы internal): контейнер DI
     // находит только public-конструкторы.
+    // Источник данных о группах AD для ролевой модели — Domain, инициализированный
+    // при чтении конфигурации (тот же экземпляр, что хранится в Data). Без этой
+    // регистрации контейнер не собирает RoleResolver и зависимые от него сервисы
+    // (провайдер состояния аутентификации, фоновый опрос) — ошибка валидации
+    // при builder.Build()
+    builder.Services.AddSingleton<IAdGroupSource>(domain);
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton(data.RoleCacheOptions!);
     builder.Services.AddSingleton<RoleResolver>();
