@@ -113,6 +113,33 @@ internal sealed class Data
     }
 
     /// <summary>
+    /// Тестовая точка внедрения домена: создаёт экземпляр <see cref="Data"/>,
+    /// у которого <see cref="Domain"/> уже установлен, минуя чтение Server.conf
+    /// (InstanceId, реестр HKCU, DPAPI и файл конфигурации). Используется
+    /// юнит-тестами обработчиков входа/выхода (<c>AccountEndpoints</c>);
+    /// производственный код создаёт <see cref="Data"/> конструктором по
+    /// умолчанию и заполняет домен только через <see cref="ReadConfigAsync"/>.
+    /// Поведение производственных сценариев не меняется.
+    /// </summary>
+    /// <param name="domain">Готовый экземпляр домена Active Directory.</param>
+    /// <returns>Новый экземпляр <see cref="Data"/> с установленным доменом.</returns>
+    internal static Data CreateWithDomain(Domain domain)
+    {
+        const string method = nameof(CreateWithDomain);
+
+        ArgumentNullException.ThrowIfNull(domain);
+
+        Data data = new();
+        data.Domain = domain;
+
+        Log.Debug(
+            "Создан экземпляр Data с готовым доменом (тестовая точка). Domain={Domain}. Class={Class}, Method={Method}",
+            domain.Name, ClassName, method);
+
+        return data;
+    }
+
+    /// <summary>
     /// Обязательные ключи домена в конфигурации. Учётные данные берутся из
     /// <c>sdomainuser</c>/<c>sdomainpass</c> либо из <c>domainuser</c>/<c>domainpass</c>.
     /// </summary>

@@ -167,7 +167,7 @@
             }
 
             // Исходный путь для возврата после входа: кладётся cookie-аутентификацией
-            // при [Authorize]-редиректе с защищённой страницы (см. LoginAsync в Program.cs).
+            // при [Authorize]-редиректе с защищённой страницы (см. LoginAsync в AccountEndpoints).
             if (query.TryGetValue("ReturnUrl", out StringValues returnUrlValues) &&
                 !string.IsNullOrEmpty(returnUrlValues))
             {
