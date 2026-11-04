@@ -38,9 +38,11 @@ internal sealed class Data
 
     /// <summary>
     /// Полный путь к файлу конфигурации Server.conf.
+    /// По умолчанию — <c>AppContext.BaseDirectory/Server.conf</c>;
+    /// может быть переопределён конструктором (тестовая точка, улучшение У2
+    /// дорожной карты декомпозиции).
     /// </summary>
-    private string ConfigFile { get; } =
-        Path.Combine(AppContext.BaseDirectory, "Server.conf");
+    private string ConfigFile { get; }
 
     /// <summary>
     /// Экземпляр домена Active Directory.
@@ -89,6 +91,25 @@ internal sealed class Data
             string id = InstanceId;
             return id.Length >= 12 ? id[..12].ToLowerInvariant() : id.ToLowerInvariant();
         }
+    }
+
+    /// <summary>
+    /// Создаёт экземпляр <see cref="Data"/>.
+    /// </summary>
+    /// <param name="configFile">
+    /// Полный путь к файлу конфигурации Server.conf.
+    /// <see langword="null"/> или пустая строка — путь по умолчанию:
+    /// <c>AppContext.BaseDirectory/Server.conf</c>.
+    /// Тестовая точка внедрения (улучшение У2 дорожной карты декомпозиции):
+    /// позволяет юнит-тестам работать с временными файлами, не затрагивая
+    /// каталог приложения. Производственный код путь не передаёт —
+    /// поведение по сравнению с прежней инициализацией свойства не меняется.
+    /// </param>
+    internal Data(string? configFile = null)
+    {
+        ConfigFile = string.IsNullOrWhiteSpace(configFile)
+            ? Path.Combine(AppContext.BaseDirectory, "Server.conf")
+            : configFile;
     }
 
     /// <summary>
@@ -250,7 +271,12 @@ internal sealed class Data
     /// Читает файл конфигурации в словарь ключ=значение.
     /// Строки-комментарии (начинающиеся с #) и пустые строки игнорируются.
     /// </summary>
-    private Dictionary<string, string> ReadConfigFile(string path)
+    /// <remarks>
+    /// Видимость <see langword="internal"/> — тестовая точка (шаг 0 дорожной
+    /// карты декомпозиции): characterization-тесты фиксируют фактическое
+    /// поведение парсера до его выноса в отдельный класс (шаг 5).
+    /// </remarks>
+    internal Dictionary<string, string> ReadConfigFile(string path)
     {
         const string method = nameof(ReadConfigFile);
         Dictionary<string, string> config = new(StringComparer.OrdinalIgnoreCase);
@@ -491,7 +517,12 @@ internal sealed class Data
     /// <see langword="null"/>, если пара не содержит имени.</param>
     /// <param name="PlainPassKey">Ключ открытого пароля учётной записи (очищается после переноса).</param>
     /// <param name="OwnerLabel">Подпись владельца учётных данных для логов: "домена", "БД", "TLS-сертификата".</param>
-    private readonly record struct CredentialKeys(
+    /// <remarks>
+    /// Видимость <see langword="internal"/> — тестовая точка (шаг 0 дорожной
+    /// карты декомпозиции): тип является параметром
+    /// <see cref="WriteSecureCredentials"/> и переносится вместе с ней в шаге 6.
+    /// </remarks>
+    internal readonly record struct CredentialKeys(
         string? SecureUserKey,
         string SecurePassKey,
         string? PlainUserKey,
@@ -507,16 +538,29 @@ internal sealed class Data
             : $"{SecureUserKey}/{SecurePassKey}";
     }
 
-    /// <summary>Ключи конфигурации сервисной учётной записи домена.</summary>
-    private static readonly CredentialKeys DomainCredentialKeys =
+    /// <summary>
+    /// Ключи конфигурации сервисной учётной записи домена.
+    /// Видимость <see langword="internal"/> — тестовая точка (шаг 0 дорожной
+    /// карты декомпозиции): characterization-тесты используют фактические
+    /// наборы ключей, а не их копии.
+    /// </summary>
+    internal static readonly CredentialKeys DomainCredentialKeys =
         new("sdomainuser", "sdomainpass", "domainuser", "domainpass", "домена");
 
-    /// <summary>Ключи конфигурации сервисной учётной записи БД.</summary>
-    private static readonly CredentialKeys DatabaseCredentialKeys =
+    /// <summary>
+    /// Ключи конфигурации сервисной учётной записи БД.
+    /// Видимость <see langword="internal"/> — по той же причине, что и
+    /// <see cref="DomainCredentialKeys"/> (шаг 0 дорожной карты декомпозиции).
+    /// </summary>
+    internal static readonly CredentialKeys DatabaseCredentialKeys =
         new("sdbuser", "sdbpass", "dbuser", "dbpass", "БД");
 
-    /// <summary>Ключи конфигурации пароля PFX-сертификата TLS (без «пользовательской» половины).</summary>
-    private static readonly CredentialKeys TlsCredentialKeys =
+    /// <summary>
+    /// Ключи конфигурации пароля PFX-сертификата TLS (без «пользовательской» половины).
+    /// Видимость <see langword="internal"/> — по той же причине, что и
+    /// <see cref="DomainCredentialKeys"/> (шаг 0 дорожной карты декомпозиции).
+    /// </summary>
+    internal static readonly CredentialKeys TlsCredentialKeys =
         new(null, "scertpass", null, "certpass", "TLS-сертификата");
 
     /// <summary>
@@ -529,7 +573,14 @@ internal sealed class Data
     /// <see langword="null"/>, если пара не содержит имени (пароль PFX-сертификата).</param>
     /// <param name="encryptedPass">Зашифрованный пароль учётной записи (Base64).</param>
     /// <returns><see langword="true"/> при успешной записи; иначе <see langword="false"/>.</returns>
-    private bool WriteSecureCredentials(CredentialKeys keys, string? encryptedUser, string encryptedPass)
+    /// <remarks>
+    /// Видимость <see langword="internal"/> — тестовая точка (шаг 0 дорожной
+    /// карты декомпозиции): characterization-тесты фиксируют фактическое
+    /// поведение записи до выноса процедуры в отдельный класс (шаг 6).
+    /// Метод принимает уже зашифрованные значения и сам криптографию
+    /// не вызывает — доступен для тестов на любой платформе.
+    /// </remarks>
+    internal bool WriteSecureCredentials(CredentialKeys keys, string? encryptedUser, string encryptedPass)
     {
         const string method = nameof(WriteSecureCredentials);
 
