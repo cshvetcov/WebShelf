@@ -4,6 +4,7 @@ using Npgsql;
 using Serilog;
 using WebShelf.Classes.DC;
 using WebShelf.Classes.DB;
+using WebShelf.Classes.Security;
 
 namespace WebShelf.Classes.Service;
 
@@ -59,6 +60,13 @@ internal sealed class Data
     /// <see langword="null"/> при схеме http или ошибке загрузки.
     /// </summary>
     internal X509Certificate2? TlsCertificate { get; private set; }
+
+    /// <summary>
+    /// Параметры ролевой модели: TTL кэша роли и интервал фонового опроса
+    /// (ключи <c>rolettl</c> / <c>rolepoll</c>).
+    /// <see langword="null"/> до чтения конфигурации или при ошибке.
+    /// </summary>
+    internal RoleCacheOptions? RoleCacheOptions { get; private set; }
 
     /// <summary>
     /// Полный InstanceId (ULID, 26 символов). Write-once на весь срок жизни процесса.
@@ -173,14 +181,17 @@ internal sealed class Data
             bool portOk = TryInitPort(config);
             bool schemeOk = TryInitScheme(config);
 
+            // Параметры ролевой модели (TTL кэша, интервал опроса)
+            bool roleCacheOk = InitRoleCacheOptions(config);
+
             // Сертификат инициализируется после схемы: нужен только при https
             bool certificateOk = TryInitCertificate(config);
 
-            if (!domainOk || !databaseOk || !portOk || !schemeOk || !certificateOk)
+            if (!domainOk || !databaseOk || !portOk || !schemeOk || !roleCacheOk || !certificateOk)
             {
                 Log.Error(
-                    "Конфигурация загружена частично. DomainOk={DomainOk}, DatabaseOk={DatabaseOk}, PortOk={PortOk}, SchemeOk={SchemeOk}, CertificateOk={CertificateOk}. Class={Class}, Method={Method}",
-                    domainOk, databaseOk, portOk, schemeOk, certificateOk, ClassName, method);
+                    "Конфигурация загружена частично. DomainOk={DomainOk}, DatabaseOk={DatabaseOk}, PortOk={PortOk}, SchemeOk={SchemeOk}, RoleCacheOk={RoleCacheOk}, CertificateOk={CertificateOk}. Class={Class}, Method={Method}",
+                    domainOk, databaseOk, portOk, schemeOk, roleCacheOk, certificateOk, ClassName, method);
                 return false;
             }
 
@@ -203,6 +214,7 @@ internal sealed class Data
             TlsCertificate = null;
             Port = null;
             Scheme = null;
+            RoleCacheOptions = null;
             return false;
         }
     }
@@ -888,6 +900,64 @@ internal sealed class Data
             Scheme = null;
             return false;
         }
+    }
+
+    /// <summary>
+    /// Читает параметры ролевой модели из конфигурации:
+    /// <c>rolettl</c> — TTL кэша роли (10–300 с, по умолчанию 60 с),
+    /// <c>rolepoll</c> — интервал фонового опроса ролевых групп (10–300 с, по умолчанию 30 с).
+    /// Значение вне диапазона или нечисловое — заменяется значением по умолчанию
+    /// (TTL из конфигурации: в пределах min/max выбранных значений; вне пределов — 60 с).
+    /// Ключи опциональны: их отсутствие — не ошибка конфигурации.
+    /// </summary>
+    /// <param name="config">Словарь конфигурации.</param>
+    /// <returns>
+    /// <see langword="true"/> при успешной инициализации (ключи опциональны —
+    /// их отсутствие не ошибка); <see langword="false"/> — только при исключении:
+    /// конфигурация считается не загруженной (fail-secure).
+    /// </returns>
+    private bool InitRoleCacheOptions(Dictionary<string, string> config)
+    {
+        const string method = nameof(InitRoleCacheOptions);
+
+        try
+        {
+            int? rolettl = TryReadInt(config, "rolettl");
+            int? rolepoll = TryReadInt(config, "rolepoll");
+
+            RoleCacheOptions options = RoleCacheOptions.Create(rolettl, rolepoll, out string ttlSource, out string pollSource);
+            RoleCacheOptions = options;
+
+            Log.Information(
+                "TTL кэша роли установлен. TtlSec={Ttl} ({TtlSource}); интервал опроса {PollSec} с ({PollSource}). Class={Class}, Method={Method}",
+                (int)options.CacheTtl.TotalSeconds, ttlSource,
+                (int)options.PollInterval.TotalSeconds, pollSource,
+                ClassName, method);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Ошибка инициализации параметров ролевой модели. Class={Class}, Method={Method}", ClassName, method);
+            RoleCacheOptions = null;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Читает целочисленный ключ конфигурации. Возвращает <see langword="null"/>
+    /// при отсутствии ключа или нечисловом значении.
+    /// </summary>
+    /// <param name="config">Словарь конфигурации.</param>
+    /// <param name="key">Имя ключа.</param>
+    private static int? TryReadInt(Dictionary<string, string> config, string key)
+    {
+        if (!config.TryGetValue(key, out string? value) || string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return int.TryParse(value.Trim(), out int parsed) ? parsed : null;
     }
 
     /// <summary>

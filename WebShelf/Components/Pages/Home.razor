@@ -4,6 +4,8 @@
 
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
+@using WebShelf.Classes.Security
 @using WebShelf.Components.Shared
 @using Serilog
 
@@ -18,7 +20,7 @@
 
 @if (isAuthenticated)
 {
-    <RibbonMenu CurrentUser="@currentUser" />
+    <RibbonMenu CurrentUser="@currentUser" CurrentRole="@currentRole" />
 }
 
 @code {
@@ -26,6 +28,7 @@
 
     private bool isAuthenticated;
     private string currentUser = string.Empty;
+    private string currentRole = string.Empty;
     private bool _pageBgApplied;
 
     /// <summary>
@@ -82,6 +85,8 @@
 
     /// <summary>
     /// Проверяет состояние аутентификации текущего пользователя.
+    /// Роль берётся из клейма Role состояния: провайдер обновляет его
+    /// в цепочке при смене роли в AD, лента перерисовывается без перезагрузки.
     /// </summary>
     private async Task CheckAuth()
     {
@@ -90,12 +95,18 @@
             AuthenticationState authState = await AuthStateProvider.GetAuthenticationStateAsync();
             isAuthenticated = authState.User.Identity?.IsAuthenticated == true;
             currentUser = authState.User.Identity?.Name ?? string.Empty;
+
+            // Отображаемое имя эффективной роли — по клейму Role из состояния
+            string? roleSystemName = authState.User.FindFirst(ClaimTypes.Role)?.Value;
+            AppRole? role = AppRoleCatalog.FindBySystemName(roleSystemName);
+            currentRole = role?.DisplayName ?? string.Empty;
         }
         catch (Exception ex)
         {
             Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(CheckAuth));
             isAuthenticated = false;
             currentUser = string.Empty;
+            currentRole = string.Empty;
         }
     }
 }

@@ -71,6 +71,14 @@ body.ws-ribbon-page {
         font-weight: 600;
     }
 
+/* Роль текущего пользователя в квадратных скобках: логин [Роль] Выйти */
+.ws-ribbon-appbar-role {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #2E5E8C;
+    white-space: nowrap;
+}
+
 .ws-ribbon-logout {
     display: inline-block;
     color: #1A3050;

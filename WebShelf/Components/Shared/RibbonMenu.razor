@@ -20,6 +20,10 @@
             {
                 <span>@CurrentUser</span>
             }
+            @if (!string.IsNullOrEmpty(CurrentRole))
+            {
+                <span class="ws-ribbon-appbar-role" title="Текущая роль">[@CurrentRole]</span>
+            }
             <button type="button" class="ws-ribbon-logout" @onclick="LogoutAsync">Выйти</button>
         </div>
     </div>
@@ -195,6 +199,14 @@
     /// </summary>
     [Parameter]
     public string CurrentUser { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Отображаемое имя роли текущего пользователя — в квадратных скобках
+    /// между логином и кнопкой «Выйти» (например: ivanov [Администратор] Выйти).
+    /// Пусто, если роль неизвестна — индикатор не отображается.
+    /// </summary>
+    [Parameter]
+    public string CurrentRole { get; set; } = string.Empty;
 
     /// <summary>
     /// Уникальный id корневого элемента ленты для JS interop.

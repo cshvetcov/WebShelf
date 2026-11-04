@@ -10,6 +10,8 @@ namespace WebShelf.Classes.DC;
 /// групп безопасности, необходимых для функционирования WebShelf
 /// (формирование списка из шаблонов имён, проверка существования
 /// и создание от имени сервисной учётной записи).
+/// Реализует <see cref="IAdGroupSource"/>: расширенные имена групп и списки
+/// прямых групп пользователей для ролевой модели (см. WebShelf.Classes.Security).
 /// Используется в браузерном приложении WebShelf для работы
 /// с документацией в проектной организации промышленного и гражданского строительства.
 /// </summary>
@@ -17,7 +19,7 @@ namespace WebShelf.Classes.DC;
 /// Сервисный логин и пароль хранятся только в зашифрованном виде (мастер-ключ).
 /// Перед использованием для AD-операций значения расшифровываются.
 /// </remarks>
-internal class Domain
+internal class Domain : IAdGroupSource
 {
     private const string ClassName = "WebShelf.Classes.DC.Domain";
 
@@ -56,8 +58,9 @@ internal class Domain
     /// <summary>
     /// Имена групп безопасности, необходимых для функционирования WebShelf.
     /// Формируется при старте приложения методом <see cref="FillRequiredGroupsFromTemplates"/>
-    /// из шаблонов <see cref="GroupNameTemplates"/>; в настоящее время шаблоны не заданы,
-    /// поэтому список пуст. До формирования проверка и создание групп не выполняются.
+    /// из шаблонов, передаваемых вызывающей стороной (строятся по каталогу ролей —
+    /// <c>AppRoleCatalog.GetGroupNameTemplates()</c>). До формирования проверка
+    /// и создание групп не выполняются.
     /// </summary>
     private readonly List<string> _requiredGroups = [];
 
@@ -65,26 +68,6 @@ internal class Domain
     /// Заполнитель короткого префикса InstanceId в шаблонах имён групп.
     /// </summary>
     internal const string InstanceIdShortPlaceholder = "{InstanceIdShort}";
-
-    /// <summary>
-    /// Шаблоны имён групп безопасности, необходимых для функционирования WebShelf.
-    /// Заполнитель <see cref="InstanceIdShortPlaceholder"/> заменяется коротким
-    /// префиксом InstanceId при формировании списка <see cref="FillRequiredGroupsFromTemplates"/>.
-    /// Список шаблонов в настоящее время пуст: шаблоны будут добавлены по мере
-    /// появления правил формирования групп.
-    /// </summary>
-    internal static readonly string[] GroupNameTemplates = [
-        $"WebShelf-{InstanceIdShortPlaceholder}-Users",
-        $"WebShelf-{InstanceIdShortPlaceholder}-Administrator",
-        $"WebShelf-{InstanceIdShortPlaceholder}-Director",
-        $"WebShelf-{InstanceIdShortPlaceholder}-BIMManager",
-        $"WebShelf-{InstanceIdShortPlaceholder}-Manager",
-        $"WebShelf-{InstanceIdShortPlaceholder}-GIP",
-        $"WebShelf-{InstanceIdShortPlaceholder}-GroupLeader",
-        $"WebShelf-{InstanceIdShortPlaceholder}-Executor",
-        $"WebShelf-{InstanceIdShortPlaceholder}-ExternalExecutor",
-        $"WebShelf-{InstanceIdShortPlaceholder}-Customer"
-        ];
 
     /// <summary>
     /// Сформированный список имен групп безопасности, необходимых для функционирования
@@ -500,9 +483,9 @@ internal class Domain
     /// </summary>
     /// <remarks>
     /// Список групп формируется при старте приложения методом
-    /// <see cref="FillRequiredGroupsFromTemplates"/>; в настоящее время шаблоны
-    /// не заданы и список пуст. Пустой список считается корректным состоянием —
-    /// метод сразу возвращает <see langword="true"/> без обращения к AD.
+    /// <see cref="FillRequiredGroupsFromTemplates"/> из шаблонов каталога ролей.
+    /// Пустой список считается корректным состоянием — метод сразу возвращает
+    /// <see langword="true"/> без обращения к AD.
     /// Группы создаются как группы безопасности, локальные в домене (Domain Local),
     /// с уникальным в домене именем (sAMAccountName); описание связывает группу
     /// с экземпляром WebShelf.
@@ -609,6 +592,194 @@ internal class Domain
                 "Ошибка при проверке или создании групп безопасности AD. Class={Class}, Method={Method}, Domain={Domain}",
                 ClassName, method, Name);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Возвращает расширенное имя группы WebShelf по суффиксу: имя строится
+    /// напрямую из <paramref name="suffix"/> и короткого префикса InstanceId
+    /// текущего экземпляра, без обращения к AD. Реализация <see cref="IAdGroupSource"/>
+    /// для резолвера ролей.
+    /// </summary>
+    /// <param name="suffix">Суффикс группы: "Users" либо суффикс ролевой группы.</param>
+    /// <returns>Имя вида WebShelf-{InstanceIdShort}-{suffix}; <see langword="null"/> при ошибке.</returns>
+    internal string? GetExpandedGroupName(string suffix)
+    {
+        const string method = nameof(GetExpandedGroupName);
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(suffix))
+            {
+                Log.Warning(
+                    "Пустой суффикс группы при построении имени. Class={Class}, Method={Method}",
+                    ClassName, method);
+                return null;
+            }
+
+            return $"WebShelf-{_instanceIdShort}-{suffix.Trim()}";
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Ошибка при построении имени группы. Class={Class}, Method={Method}", ClassName, method);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Возвращает прямые группы, в которых состоит пользователь
+    /// (вложенные группы не учитываются — аналогично проверке группы Users при входе).
+    /// Для каждой группы берётся sAMAccountName, при его отсутствии — Name.
+    /// Реализация <see cref="IAdGroupSource"/> для резолвера ролей.
+    /// </summary>
+    /// <param name="samAccountName">Имя учётной записи (sAMAccountName, без доменной части).</param>
+    /// <returns>
+    /// Список имён групп. Пустой список — пользователь найден, но не состоит ни в одной
+    /// группе (в том числе пользователь удалён из AD); <see langword="null"/> — ошибка
+    /// обращения к AD (резолвер в этом случае не меняет известное состояние).
+    /// </returns>
+    internal IReadOnlyList<string>? GetUserGroupNames(string samAccountName)
+    {
+        const string method = nameof(GetUserGroupNames);
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(samAccountName))
+            {
+                Log.Warning(
+                    "Пустое имя пользователя при получении групп. Class={Class}, Method={Method}",
+                    ClassName, method);
+                return null;
+            }
+
+            string serviceUser = GetDecryptedUser();
+            string servicePassword = GetDecryptedPassword();
+
+            // Работа с объектами AD — от имени сервисной учётной записи;
+            // реальное имя учётной записи в логах не фигурирует
+            using PrincipalContext context = new(ContextType.Domain, Name, serviceUser, servicePassword);
+
+            using UserPrincipal? user =
+                UserPrincipal.FindByIdentity(context, IdentityType.SamAccountName, samAccountName.Trim()) ??
+                UserPrincipal.FindByIdentity(context, IdentityType.UserPrincipalName, $"{samAccountName.Trim()}@{Name}");
+
+            if (user is null)
+            {
+                // Пользователь удалён из AD: считаем, что он не состоит ни в одной группе
+                // (пустой список), а не ошибкой — с точки зрения ролевой модели это
+                // потеря всех групп, включая Users
+                Log.Warning(
+                    "Пользователь не найден в AD при получении групп: возвращён пустой список. Class={Class}, Method={Method}",
+                    ClassName, method);
+                return [];
+            }
+
+            // GetGroups() — только прямые группы, в порядке выдачи AD
+            using PrincipalSearchResult<Principal> result = user.GetGroups();
+
+            List<string> groupNames = [];
+
+            foreach (Principal group in result)
+            {
+                using Principal current = group;
+
+                // sAMAccountName — каноническое имя группы; у некоторых объектов AD
+                // оно пустое — тогда берём Name
+                string? name = current.SamAccountName;
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    name = current.Name;
+                }
+
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    groupNames.Add(name);
+                }
+            }
+
+            Log.Debug(
+                "Прямые группы пользователя получены. Count={Count}. Class={Class}, Method={Method}",
+                groupNames.Count, ClassName, method);
+
+            return groupNames;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex,
+                "Ошибка при получении групп пользователя. Class={Class}, Method={Method}",
+                ClassName, method);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Возвращает sAMAccountName участников группы (прямых членов, без вложенных групп).
+    /// Используется при старте для проверки требования наличия минимум одного администратора.
+    /// </summary>
+    /// <param name="groupName">Имя группы (sAMAccountName или Name, регистр не важен).</param>
+    /// <returns>
+    /// Список имён учётных записей; пустой список — в группе нет участников;
+    /// <see langword="null"/> — группа не найдена или ошибка обращения к AD.
+    /// </returns>
+    internal List<string>? GetGroupMemberNames(string groupName)
+    {
+        const string method = nameof(GetGroupMemberNames);
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(groupName))
+            {
+                Log.Warning(
+                    "Пустое имя группы при получении участников. Class={Class}, Method={Method}",
+                    ClassName, method);
+                return null;
+            }
+
+            string serviceUser = GetDecryptedUser();
+            string servicePassword = GetDecryptedPassword();
+
+            using PrincipalContext context = new(ContextType.Domain, Name, serviceUser, servicePassword);
+
+            using GroupPrincipal? group =
+                GroupPrincipal.FindByIdentity(context, IdentityType.SamAccountName, groupName.Trim()) ??
+                GroupPrincipal.FindByIdentity(context, IdentityType.Name, groupName.Trim());
+
+            if (group is null)
+            {
+                Log.Warning(
+                    "Группа {Group} не найдена при получении участников. Class={Class}, Method={Method}",
+                    groupName, ClassName, method);
+                return null;
+            }
+
+            using PrincipalSearchResult<Principal> members = group.GetMembers();
+
+            List<string> names = [];
+
+            foreach (Principal member in members)
+            {
+                using Principal current = member;
+
+                // Учитываются только пользователи: группы внутри группы не считаются
+                // участниками (прямое членство)
+                if (current is UserPrincipal && !string.IsNullOrWhiteSpace(current.SamAccountName))
+                {
+                    names.Add(current.SamAccountName);
+                }
+            }
+
+            Log.Debug(
+                "Участники группы получены. Group={Group}, Count={Count}. Class={Class}, Method={Method}",
+                groupName, names.Count, ClassName, method);
+
+            return names;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex,
+                "Ошибка при получении участников группы. Class={Class}, Method={Method}",
+                ClassName, method);
+            return null;
         }
     }
 

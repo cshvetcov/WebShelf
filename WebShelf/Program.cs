@@ -1,12 +1,14 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography.X509Certificates;
 using Serilog.Events;
 using WebShelf.Classes.DC;
+using WebShelf.Classes.Security;
 using WebShelf.Classes.Service;
 using WebShelf.Components;
 
@@ -92,13 +94,15 @@ try
     // --- Группы безопасности AD ---
     // После считывания конфигурации (мастер-ключ, инициализация домена, проверка
     // сервисной учётной записи): 1) формирование списка необходимых групп из шаблонов
-    // имён ({InstanceIdShort} заменяется коротким префиксом InstanceId);
+    // имён — состав задаётся каталогом ролей (AppRoleCatalog): группа доступа Users
+    // и по одной группе на каждую роль с суффиксом (под Гостя группа не создаётся);
+    // {InstanceIdShort} заменяется коротким префиксом InstanceId;
     // 2) проверка существования групп и создание отсутствующих от имени сервисной УЗ.
     // При любой ошибке приложение завершается — без необходимых групп оно не работает.
     // После успешного чтения конфигурации домен гарантированно инициализирован
     Domain domain = data.Domain!;
 
-    if (!domain.FillRequiredGroupsFromTemplates(Domain.GroupNameTemplates))
+    if (!domain.FillRequiredGroupsFromTemplates(AppRoleCatalog.GetGroupNameTemplates()))
     {
         Log.Fatal(
             "Не удалось сформировать список необходимых групп безопасности AD. Приложение останавливается. Class={Class}, Method={Method}",
@@ -112,6 +116,22 @@ try
             "Не удалось создать необходимые группы безопасности AD. Приложение останавливается. Class={Class}, Method={Method}",
             "WebShelf.Program", "Main");
         return 1;
+    }
+
+    // Требование: в системе всегда должен быть минимум один администратор.
+    // Проверяется после создания групп: если в группе администраторов нет ни одного
+    // участника — предупреждение в лог (запуск не блокируется: группа могла быть
+    // только что создана и ждёт первого участника).
+    string? adminGroup = domain.GetExpandedGroupName(AppRoleCatalog.Administrator.GroupSuffix!);
+    if (adminGroup is not null)
+    {
+        List<string>? adminMembers = domain.GetGroupMemberNames(adminGroup);
+        if (adminMembers is not { Count: > 0 })
+        {
+            Log.Warning(
+                "В группе администраторов {Group} нет участников — нарушено требование наличия минимум одного администратора. Class={Class}, Method={Method}",
+                adminGroup, "WebShelf.Program", "Main");
+        }
     }
 
     // Предупреждение о небезопасной схеме: при http cookie аутентификации
@@ -229,6 +249,23 @@ try
 
     builder.Services.AddSingleton<LoginGuard>();
 
+    // --- Ролевая модель (варианты 1+2+3) ---
+    // Вариант 1: TTL-кэш роли в резолвере (rolettl, по умолчанию 60 с).
+    // Вариант 2: фоновый опрос ролевых групп с push-обновлением открытых цепочек
+    // (rolepoll, по умолчанию 30 с) — событие идёт через RoleChangeNotifier
+    // в scoped-провайдер каждой цепочки.
+    // Вариант 3: свежая LDAP-проверка в обход кэша — при входе и критичных операциях.
+    // Конструкторы всех сервисов объявлены public (классы internal): контейнер DI
+    // находит только public-конструкторы.
+    builder.Services.AddSingleton(TimeProvider.System);
+    builder.Services.AddSingleton(data.RoleCacheOptions!);
+    builder.Services.AddSingleton<RoleResolver>();
+    builder.Services.AddSingleton<RoleChangeNotifier>();
+    builder.Services.AddScoped<AuthenticationStateProvider, AppAuthenticationStateProvider>();
+    // AddHostedService одновременно регистрирует службу как singleton,
+    // отдельная регистрация не нужна
+    builder.Services.AddHostedService<RoleRefreshService>();
+
     builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
     WebApplication app = builder.Build();
@@ -281,11 +318,14 @@ finally
 
 /// <summary>
 /// Обработчик POST /account/login — CSRF-проверка, защита от перебора, проверка AD и выдача cookie.
+/// После валидации учётных данных вычисляется роль: свежая LDAP-проверка в обход
+/// кэша (вариант 3) — клейм роли в cookie является только транспортом на момент входа.
 /// </summary>
 static async Task<IResult> LoginAsync(
     HttpContext context,
     IAntiforgery antiforgery,
     LoginGuard loginGuard,
+    RoleResolver roleResolver,
     Data data)
 {
     const string className = "WebShelf.Program";
@@ -365,11 +405,34 @@ static async Task<IResult> LoginAsync(
         // независимо от того, в каком формате пользователь ввёл логин.
         string samAccountName = userKey[..userKey.IndexOf('@')];
 
+        // Роль — свежая LDAP-проверка в обход кэша (вариант 3). Отказ (AD недоступен,
+        // кэш пуст) или потеря группы Users — вход не выполняется (fail-secure):
+        // пароль уже проверен, повторная блокировка не нужна, отдаём server
+        RoleResolution? roleState = roleResolver.ResolveFresh(samAccountName);
+        if (roleState is null || !roleState.HasUsersGroup)
+        {
+            Log.Warning(
+                "Вход отклонён: роль недоступна (AD) или нет группы Users. Ip={Ip}. Class={Class}, Method={Method}",
+                clientIp, className, method);
+            return Results.Redirect("/entry?error=server");
+        }
+
         List<Claim> claims = new List<Claim>
         {
             new(ClaimTypes.Name, samAccountName),
-            new(ClaimTypes.NameIdentifier, samAccountName)
+            new(ClaimTypes.NameIdentifier, samAccountName),
+            // Эффективная роль — транспорт в cookie на момент входа;
+            // источник истины всегда AD (резолвер обновляет роль в цепочке)
+            new(ClaimTypes.Role, roleState.Role.SystemName)
         };
+
+        if (roleState.MatchedRoles.Count > 0)
+        {
+            // Диагностический клейм: все совпавшие роли через запятую
+            claims.Add(new Claim(
+                AppRoleCatalog.MatchedRolesClaimType,
+                string.Join(",", roleState.MatchedRoles.Select(role => role.SystemName))));
+        }
 
         ClaimsIdentity identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         ClaimsPrincipal principal = new ClaimsPrincipal(identity);
