@@ -111,7 +111,7 @@ try
     List<string> groupNameTemplates =
     [
         // Группа доступа Users — не роль: шаблон хранится в Domain
-        $"WebShelf-{Domain.InstanceIdShortPlaceholder}-{Domain.UsersGroupSuffix}",
+        $"WebShelf-{AdNames.InstanceIdShortPlaceholder}-{Domain.UsersGroupSuffix}",
         // Шаблоны ролевых групп — по одной на каждую роль каталога (Гость исключён)
         .. RoleCatalog.BuildGroupNameTemplates()
     ];

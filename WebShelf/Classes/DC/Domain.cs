@@ -1,4 +1,4 @@
-﻿using System.DirectoryServices.AccountManagement;
+using System.DirectoryServices.AccountManagement;
 using Serilog;
 using WebShelf.Classes.Service;
 
@@ -63,11 +63,6 @@ internal class Domain : IAdGroupSource
     /// До формирования проверка и создание групп не выполняются.
     /// </summary>
     private readonly List<string> _requiredGroups = [];
-
-    /// <summary>
-    /// Заполнитель короткого префикса InstanceId в шаблонах имён групп.
-    /// </summary>
-    internal const string InstanceIdShortPlaceholder = "{InstanceIdShort}";
 
     /// <summary>
     /// Суффикс группы доступа (не роль): членство в WebShelf-{InstanceIdShort}-Users
@@ -146,7 +141,7 @@ internal class Domain : IAdGroupSource
         if (string.IsNullOrWhiteSpace(plainPassword))
             throw new ArgumentException("Пароль после расшифровки пустой.", nameof(encryptedPassword));
 
-        string? userName = NormalizeUserName(plainUser, domain);
+        string? userName = AdNames.NormalizeUserName(plainUser, domain);
         if (string.IsNullOrWhiteSpace(userName))
             throw new ArgumentException($"Имя пользователя '{plainUser}' не удалось привести к формату username@domain.", nameof(encryptedUser));
 
@@ -263,7 +258,7 @@ internal class Domain : IAdGroupSource
             return false;
         }
 
-        string normalizedUser = (NormalizeUserName(username, Name) ?? string.Empty).Trim();
+        string normalizedUser = (AdNames.NormalizeUserName(username, Name) ?? string.Empty).Trim();
         // В логах не светим реальные имена учётных записей
         string accountLabel = checkUsersGroup ? "UserAccount" : "SystemAccount";
 
@@ -371,31 +366,9 @@ internal class Domain : IAdGroupSource
     }
 
     /// <summary>
-    /// Подставляет в шаблон имени группы короткий префикс InstanceId вместо
-    /// заполнителя <see cref="InstanceIdShortPlaceholder"/>. Замена выполняется
-    /// для всех вхождений заполнителя и без учёта его регистра; шаблон без
-    /// заполнителя возвращается без изменений (пробелы по краям обрезаются).
-    /// Метод выполняет только подстановку: обнаружение опечаток в заполнителе
-    /// выполняет <see cref="FillRequiredGroupsFromTemplates"/>.
-    /// </summary>
-    /// <param name="template">Шаблон имени группы, например WebShelf-{InstanceIdShort}-Administrator.</param>
-    /// <param name="instanceIdShort">Короткий префикс InstanceId (12 символов, нижний регистр).</param>
-    /// <returns>Имя группы с выполненной подстановкой.</returns>
-    /// <exception cref="ArgumentException">Если шаблон или префикс пустые.</exception>
-    internal static string ExpandGroupTemplate(string template, string instanceIdShort)
-    {
-        if (string.IsNullOrWhiteSpace(template))
-            throw new ArgumentException("Шаблон имени группы не может быть пустым.", nameof(template));
-        if (string.IsNullOrWhiteSpace(instanceIdShort))
-            throw new ArgumentException("Короткий префикс InstanceId не может быть пустым.", nameof(instanceIdShort));
-
-        return template.Trim().Replace(InstanceIdShortPlaceholder, instanceIdShort, StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
     /// Формирует список групп безопасности, необходимых для функционирования WebShelf
     /// (<see cref="RequiredGroups"/>), из списка шаблонов имен: заполнитель
-    /// <see cref="InstanceIdShortPlaceholder"/> в каждом шаблоне заменяется коротким
+    /// <see cref="AdNames.InstanceIdShortPlaceholder"/> в каждом шаблоне заменяется коротким
     /// префиксом InstanceId текущего экземпляра.
     /// Например: WebShelf-{InstanceIdShort}-Administrator → WebShelf-000000000000-Administrator.
     /// </summary>
@@ -443,7 +416,7 @@ internal class Domain : IAdGroupSource
                 }
 
                 string trimmed = template.Trim();
-                string groupName = ExpandGroupTemplate(trimmed, _instanceIdShort);
+                string groupName = AdNames.ExpandGroupTemplate(trimmed, _instanceIdShort);
 
                 if (groupName.Contains('{') || groupName.Contains('}'))
                 {
@@ -452,7 +425,7 @@ internal class Domain : IAdGroupSource
                     // привязано к экземпляру, поэтому в список групп его не включаем
                     Log.Warning(
                         "Шаблон {Template} содержит некорректный заполнитель (ожидается {Placeholder}); имя в список групп не добавлено. Class={Class}, Method={Method}",
-                        trimmed, InstanceIdShortPlaceholder, ClassName, method);
+                        trimmed, AdNames.InstanceIdShortPlaceholder, ClassName, method);
                     continue;
                 }
 
@@ -792,78 +765,5 @@ internal class Domain : IAdGroupSource
                 ClassName, method);
             return null;
         }
-    }
-
-    /// <summary>
-    /// Приводит имя пользователя к формату <c>username@domainname</c>.
-    /// Имя домена передаётся явно — класс не зависит от хранилища Data.
-    /// </summary>
-    internal static string? NormalizeUserName(string userName, string domainName)
-    {
-        const string method = nameof(NormalizeUserName);
-
-        try
-        {
-            if (string.IsNullOrWhiteSpace(userName))
-            {
-                WarnInvalid("Не задано имя пользователя.");
-                return null;
-            }
-
-            string domain = domainName.Trim();
-            if (domain.Length == 0)
-            {
-                WarnInvalid("Не задано имя домена.");
-                return null;
-            }
-
-            string user = userName.Trim();
-
-            // Нет разделителей — просто добавляем домен.
-            if (user.IndexOfAny(['@', '\\']) < 0) return $"{user}@{domain}";
-
-            // Формат UPN: user@domain
-            if (user.Contains('@'))
-            {
-                if (user.IndexOf('@') == user.LastIndexOf('@') &&
-                    user.EndsWith($"@{domain}", StringComparison.OrdinalIgnoreCase) &&
-                    user.IndexOf('@') > 0 &&
-                    user.IndexOf('@') < user.Length - 1)
-                {
-                    return user;
-                }
-                WarnInvalid("Некорректное имя пользователя.");
-                return null;
-            }
-
-            // Формат DOMAIN\user
-            int slashIndex = user.IndexOf('\\');
-            if (slashIndex <= 0 || slashIndex >= user.Length - 1)
-            {
-                WarnInvalid("Некорректное имя пользователя.");
-                return null;
-            }
-
-            string bareUser = user[(slashIndex + 1)..].Trim();
-            if (bareUser.Length == 0)
-            {
-                WarnInvalid("Некорректное имя пользователя.");
-                return null;
-            }
-
-            return $"{bareUser}@{domain}";
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex,
-                "Ошибка при нормализации имени пользователя. Class={Class}, Method={Method}, UserName={UserName}",
-                ClassName, method, "UserAccount");
-            return null;
-        }
-
-        void WarnInvalid(string reason) =>
-            Log.Warning(
-                "{Reason} Class={Class}, Method={Method}, UserName={UserName}",
-                reason, ClassName, method, "UserAccount");
     }
 }

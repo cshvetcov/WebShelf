@@ -97,7 +97,7 @@ internal static class RoleCatalog
     /// </summary>
     /// <returns>Массив шаблонов вида <c>WebShelf-{InstanceIdShort}-Administrator</c>.</returns>
     internal static string[] BuildGroupNameTemplates() =>
-        AdRoles.Select(role => $"WebShelf-{Domain.InstanceIdShortPlaceholder}-{role.GroupSuffix}").ToArray();
+        AdRoles.Select(role => $"WebShelf-{AdNames.InstanceIdShortPlaceholder}-{role.GroupSuffix}").ToArray();
 
     /// <summary>
     /// Строит фактическое имя AD-группы указанной роли для заданного экземпляра.

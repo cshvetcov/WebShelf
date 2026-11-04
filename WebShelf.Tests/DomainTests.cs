@@ -5,98 +5,13 @@ using Xunit;
 namespace WebShelf.Tests;
 
 /// <summary>
-/// Тесты класса Domain: нормализация имён пользователей к формату username@domain,
-/// построение LDAP-пути, валидация аргументов конструктора, а также формирование
-/// списка необходимых групп безопасности из шаблонов имён (подстановка заполнителя
-/// {InstanceIdShort}, отбраковка шаблонов с опечаткой).
+/// Тесты класса Domain: валидация аргументов конструктора, построение LDAP-пути
+/// (полный конструктор — только Windows), а также формирование списка необходимых
+/// групп безопасности из шаблонов имён (подстановка заполнителя {InstanceIdShort},
+/// отбраковка шаблонов с опечаткой).
 /// </summary>
 public class DomainTests
 {
-    #region NormalizeUserName
-
-    /// <summary>
-    /// Имя без разделителей дополняется доменом.
-    /// </summary>
-    [Theory]
-    [InlineData("ivanov", "company.local", "ivanov@company.local")]
-    [InlineData("IVANOV", "company.local", "IVANOV@company.local")]
-    [InlineData(" ivanov ", "company.local", "ivanov@company.local")]
-    [InlineData("ivanov", " company.local ", "ivanov@company.local")]
-    [InlineData("o'connor", "company.local", "o'connor@company.local")]
-    public void NormalizeUserName_BareName_AppendsDomain(string userName, string domainName, string expected)
-    {
-        string? result = Domain.NormalizeUserName(userName, domainName);
-
-        Assert.Equal(expected, result);
-    }
-
-    /// <summary>
-    /// Формат DOMAIN\user приводится к username@domain.
-    /// </summary>
-    [Theory]
-    [InlineData("DOMAIN\\ivanov", "company.local", "ivanov@company.local")]
-    [InlineData("COMPANY\\ivanov", "company.local", "ivanov@company.local")]
-    [InlineData("DOMAIN\\ ivanov", "company.local", "ivanov@company.local")]
-    [InlineData(" ivanov\\ ", "company.local", null)]
-    public void NormalizeUserName_DownLevelLogon_ConvertsToUpn(string userName, string domainName, string? expected)
-    {
-        string? result = Domain.NormalizeUserName(userName, domainName);
-
-        Assert.Equal(expected, result);
-    }
-
-    /// <summary>
-    /// Корректный UPN для целевого домена возвращается без изменений
-    /// (регистр доменной части не важен).
-    /// </summary>
-    [Theory]
-    [InlineData("ivanov@company.local", "company.local", "ivanov@company.local")]
-    [InlineData("ivanov@COMPANY.LOCAL", "company.local", "ivanov@COMPANY.LOCAL")]
-    [InlineData(" ivanov@company.local ", "company.local", "ivanov@company.local")]
-    public void NormalizeUserName_ValidUpn_ReturnedUnchanged(string userName, string domainName, string expected)
-    {
-        string? result = Domain.NormalizeUserName(userName, domainName);
-
-        Assert.Equal(expected, result);
-    }
-
-    /// <summary>
-    /// Некорректные имена пользователей отклоняются (возвращается null).
-    /// </summary>
-    [Theory]
-    [InlineData(null, "company.local")]                  // имя не задано
-    [InlineData("", "company.local")]                    // пустое имя
-    [InlineData("   ", "company.local")]                 // имя из пробелов
-    [InlineData("ivanov", null)]                         // домен не задан
-    [InlineData("ivanov", "")]                           // пустой домен
-    [InlineData("ivanov", "   ")]                        // домен из пробелов
-    [InlineData("@company.local", "company.local")]      // пустая часть имени
-    [InlineData("user@", "company.local")]               // пустая доменная часть
-    [InlineData("a@b@company.local", "company.local")]   // два разделителя @
-    [InlineData("user@other.local", "company.local")]    // чужой домен
-    [InlineData("\\ivanov", "company.local")]            // слэш в начале
-    [InlineData("ivanov\\", "company.local")]            // слэш в конце
-    public void NormalizeUserName_InvalidInput_ReturnsNull(string? userName, string? domainName)
-    {
-        string? result = Domain.NormalizeUserName(userName!, domainName!);
-
-        Assert.Null(result);
-    }
-
-    /// <summary>
-    /// UPN, введённый в другом регистре, но совпадающий с доменом без учёта регистра,
-    /// принимается (сравнение доменной части нечувствительно к регистру).
-    /// </summary>
-    [Fact]
-    public void NormalizeUserName_UpnCaseInsensitiveDomain_Accepted()
-    {
-        string? result = Domain.NormalizeUserName("Ivanov@Company.Local", "COMPANY.LOCAL");
-
-        Assert.Equal("Ivanov@Company.Local", result);
-    }
-
-    #endregion
-
     #region Валидация аргументов конструктора
 
     /// <summary>
@@ -215,76 +130,6 @@ public class DomainTests
 
         // Пустой список: метод завершается успешно до любых сетевых операций
         Assert.True(domain.EnsureRequiredGroupsExist());
-    }
-
-    #endregion
-
-    #region ExpandGroupTemplate
-
-    /// <summary>
-    /// Заполнитель {InstanceIdShort} заменяется коротким префиксом InstanceId
-    /// во всех вхождениях; регистр заполнителя не важен, пробелы по краям шаблона
-    /// обрезаются, шаблон без заполнителя возвращается без изменений.
-    /// </summary>
-    [Theory]
-    [InlineData("WebShelf-{InstanceIdShort}-Administrator", "000000000000", "WebShelf-000000000000-Administrator")]
-    [InlineData("WebShelf-{InstanceIdShort}-Users", "abcdef012345", "WebShelf-abcdef012345-Users")]
-    [InlineData("WebShelf-{instanceidshort}-Users", "abcdef012345", "WebShelf-abcdef012345-Users")]
-    [InlineData(" WebShelf-{InstanceIdShort}-Users ", "abcdef012345", "WebShelf-abcdef012345-Users")]
-    [InlineData("WebShelf-{InstanceIdShort}-{InstanceIdShort}-X", "ab12", "WebShelf-ab12-ab12-X")]
-    [InlineData("{InstanceIdShort}", "abcdef012345", "abcdef012345")]
-    [InlineData("WebShelf-Fixed-Group", "abcdef012345", "WebShelf-Fixed-Group")]
-    public void ExpandGroupTemplate_ValidTemplate_SubstitutesInstanceIdShort(
-        string template, string instanceIdShort, string expected)
-    {
-        string result = Domain.ExpandGroupTemplate(template, instanceIdShort);
-
-        Assert.Equal(expected, result);
-    }
-
-    /// <summary>
-    /// Метод выполняет только подстановку и не отклоняет шаблон с опечаткой:
-    /// некорректный заполнитель (опечатка, незакрытая или лишняя фигурная скобка)
-    /// проходит в результат без изменений, корректные вхождения при этом заменяются.
-    /// Отбраковка таких шаблонов выполняется в FillRequiredGroupsFromTemplates.
-    /// </summary>
-    [Theory]
-    [InlineData("WebShelf-{InstanseIdShort}-Administrator", "abcdef012345", "WebShelf-{InstanseIdShort}-Administrator")]
-    [InlineData("WebShelf-{InstanceIdShort-Manager", "abcdef012345", "WebShelf-{InstanceIdShort-Manager")]
-    [InlineData("WebShelf-Users}", "abcdef012345", "WebShelf-Users}")]
-    [InlineData("WebShelf-{InstanceIdShort}-{Role}", "abcdef012345", "WebShelf-abcdef012345-{Role}")]
-    public void ExpandGroupTemplate_InvalidPlaceholder_NotRejected(
-        string template, string instanceIdShort, string expected)
-    {
-        string result = Domain.ExpandGroupTemplate(template, instanceIdShort);
-
-        Assert.Equal(expected, result);
-    }
-
-    /// <summary>
-    /// Пустой шаблон имени группы отклоняется.
-    /// </summary>
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void ExpandGroupTemplate_EmptyTemplate_ThrowsArgumentException(string? template)
-    {
-        Assert.Throws<ArgumentException>(() =>
-            Domain.ExpandGroupTemplate(template!, "abcdef012345"));
-    }
-
-    /// <summary>
-    /// Пустой короткий префикс InstanceId отклоняется.
-    /// </summary>
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void ExpandGroupTemplate_EmptyInstanceIdShort_ThrowsArgumentException(string? instanceIdShort)
-    {
-        Assert.Throws<ArgumentException>(() =>
-            Domain.ExpandGroupTemplate("WebShelf-{InstanceIdShort}-Users", instanceIdShort!));
     }
 
     #endregion

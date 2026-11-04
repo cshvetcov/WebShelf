@@ -82,7 +82,7 @@ internal static class AccountEndpoints
             // попытки учитываются только по IP-ключу.
             string? userKey = string.IsNullOrWhiteSpace(username) || data.Domain is null
                 ? null
-                : Domain.NormalizeUserName(username, data.Domain.Name);
+                : AdNames.NormalizeUserName(username, data.Domain.Name);
 
             // --- Brute-force: уже заблокирован? ---
             if (loginGuard.IsLocked(clientIp, userKey, out int remainBefore))
