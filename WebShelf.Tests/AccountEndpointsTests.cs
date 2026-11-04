@@ -24,6 +24,13 @@ namespace WebShelf.Tests;
 /// требует живого AD — ValidateAdCredentials нельзя подменить без изменения
 /// производственного кода — и проверяется ручной смоук-проверкой на Windows.
 /// </summary>
+/// <remarks>
+/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>:
+/// тест успешного входа использует реестровый мастер-ключ, с которым работают
+/// тесты KeyStoreTests (временная подмена значения реестра исключает
+/// параллельное выполнение).
+/// </remarks>
+[Collection(KeyStoreTests.MasterKeyRegistryCollection)]
 public class AccountEndpointsTests : IDisposable
 {
     /// <summary>Тестируемая защита от перебора: свежий экземпляр на каждый тест.</summary>

@@ -10,6 +10,12 @@ namespace WebShelf.Tests;
 /// групп безопасности из шаблонов имён (подстановка заполнителя {InstanceIdShort},
 /// отбраковка шаблонов с опечаткой).
 /// </summary>
+/// <remarks>
+/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>:
+/// тесты используют реестровый мастер-ключ, с которым работают тесты KeyStoreTests
+/// (временная подмена значения реестра исключает параллельное выполнение).
+/// </remarks>
+[Collection(KeyStoreTests.MasterKeyRegistryCollection)]
 public class DomainTests
 {
     #region Валидация аргументов конструктора

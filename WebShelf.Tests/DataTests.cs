@@ -7,6 +7,13 @@ namespace WebShelf.Tests;
 /// Тесты хранилища системных данных Data: жизненный цикл InstanceId,
 /// свойство InstanceIdShort и отказные сценарии чтения конфигурации.
 /// </summary>
+/// <remarks>
+/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>:
+/// чтение конфигурации может обращаться к реестровому мастер-ключу, с которым
+/// работают тесты KeyStoreTests (временная подмена значения реестра исключает
+/// параллельное выполнение).
+/// </remarks>
+[Collection(KeyStoreTests.MasterKeyRegistryCollection)]
 public class DataTests
 {
     /// <summary>Имя файла конфигурации, ожидаемое рядом с бинарниками приложения.</summary>

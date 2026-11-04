@@ -16,6 +16,12 @@ namespace WebShelf.Tests;
 /// платформах. Домен и БД недоступны в тестовом окружении — миграция
 /// происходит до проверок их доступности, что и проверяется тестами.
 /// </summary>
+/// <remarks>
+/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>:
+/// тесты используют реестровый мастер-ключ, с которым работают тесты KeyStoreTests
+/// (временная подмена значения реестра исключает параллельное выполнение).
+/// </remarks>
+[Collection(KeyStoreTests.MasterKeyRegistryCollection)]
 public class DataConfigMigrationTests
 {
     /// <summary>

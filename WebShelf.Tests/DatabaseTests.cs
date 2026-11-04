@@ -11,6 +11,12 @@ namespace WebShelf.Tests;
 /// поэтому работают на любой ОС. Полный конструктор (расшифровка учётных
 /// данных, создание NpgsqlDataSource) требует Windows-хранилища мастер-ключа.
 /// </summary>
+/// <remarks>
+/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>:
+/// тесты используют реестровый мастер-ключ, с которым работают тесты KeyStoreTests
+/// (временная подмена значения реестра исключает параллельное выполнение).
+/// </remarks>
+[Collection(KeyStoreTests.MasterKeyRegistryCollection)]
 public class DatabaseTests
 {
     /// <summary>

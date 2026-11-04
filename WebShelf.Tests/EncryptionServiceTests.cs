@@ -5,10 +5,12 @@ using Xunit;
 namespace WebShelf.Tests;
 
 /// <summary>
-/// Тесты сервиса шифрования EncryptionService: циклы шифрования/расшифровки,
+/// Тесты криптографического ядра EncryptionService: циклы шифрования/расшифровки,
 /// структура полезной нагрузки, проверка целостности (MAC), валидация ключей.
 /// Все тесты используют явно переданный мастер-ключ — реестр и DPAPI не затрагиваются,
 /// поэтому выполняются на любой ОС.
+/// Тесты хранилища ключей (создание ключей, InstanceId, мастер-ключ в HKCU + DPAPI)
+/// после шага 3 декомпозиции вынесены в <see cref="KeyStoreTests"/>.
 /// </summary>
 public class EncryptionServiceTests
 {
@@ -23,42 +25,31 @@ public class EncryptionServiceTests
         return key;
     }
 
-    #region Создание ключа
+    #region Фасад хранилища ключей (переходный, до шага 8)
 
     /// <summary>
-    /// CreateKey возвращает массив ровно из 32 байт.
+    /// Переходный фасад хранилища ключей (шаг 3 декомпозиции): делегаты
+    /// EncryptionService маршрутизируют вызовы в KeyStore без изменения
+    /// контракта — созданные ключи имеют прежний размер, валидация
+    /// переданного ключа выполняется до обращения к реестру (выполняется
+    /// на любой ОС), очистка кэша не выбрасывает исключений. Реестр и DPAPI
+    /// не затрагиваются.
     /// </summary>
     [Fact]
-    public void CreateKey_Returns32Bytes()
+    public void KeyStoreFacade_DelegatesPreserveContract()
     {
         byte[] key = EncryptionService.CreateKey();
-
         Assert.NotNull(key);
         Assert.Equal(MasterKeySizeBytes, key.Length);
-    }
 
-    /// <summary>
-    /// CreateKey при повторных вызовах генерирует разные ключи.
-    /// </summary>
-    [Fact]
-    public void CreateKey_GeneratesDifferentKeys()
-    {
-        byte[] first = EncryptionService.CreateKey();
-        byte[] second = EncryptionService.CreateKey();
+        byte[] decoded = Convert.FromBase64String(EncryptionService.CreateKeyBase64());
+        Assert.Equal(MasterKeySizeBytes, decoded.Length);
 
-        Assert.False(CryptographicOperations.FixedTimeEquals(first, second));
-    }
+        // Валидация некорректного по длине ключа — до обращения к реестру, на любой ОС
+        Assert.Null(EncryptionService.EnsureMasterKey(new byte[16]));
 
-    /// <summary>
-    /// CreateKeyBase64 возвращает строку, декодирующуюся в 32 байта.
-    /// </summary>
-    [Fact]
-    public void CreateKeyBase64_DecodesTo32Bytes()
-    {
-        string base64Key = EncryptionService.CreateKeyBase64();
-
-        byte[] key = Convert.FromBase64String(base64Key);
-        Assert.Equal(MasterKeySizeBytes, key.Length);
+        // Очистка кэша безопасна при пустом кэше
+        EncryptionService.ClearMasterKeyCache();
     }
 
     #endregion
@@ -386,75 +377,6 @@ public class EncryptionServiceTests
 
         Assert.Throws<FormatException>(() =>
             EncryptionService.Decrypt("некорректные-данные", key));
-    }
-
-    #endregion
-
-    #region Валидация входного ключа EnsureMasterKey
-
-    /// <summary>
-    /// EnsureMasterKey отклоняет ключ неверной длины до обращения к реестру:
-    /// выполняется на любой ОС и не создаёт побочных эффектов.
-    /// </summary>
-    [Fact]
-    public void EnsureMasterKey_InvalidKeyLength_ReturnsNull()
-    {
-        EncryptionService.ClearMasterKeyCache();
-
-        byte[] invalidKey = new byte[16];
-
-        Assert.Null(EncryptionService.EnsureMasterKey(invalidKey));
-    }
-
-    #endregion
-
-    #region InstanceId (только Debug: реестр не используется)
-
-    /// <summary>
-    /// В Debug-сборке EnsureInstanceId возвращает фиксированное значение
-    /// из 26 нулей без обращения к реестру. В Release тест пропускается:
-    /// обращение к реестру/DPAPI создаёт побочные эффекты на машине.
-    /// </summary>
-    [Fact]
-    public void EnsureInstanceId_DebugBuild_ReturnsFixed26Zeros()
-    {
-#if DEBUG
-        string? instanceId = EncryptionService.EnsureInstanceId();
-
-        Assert.NotNull(instanceId);
-        Assert.Equal(26, instanceId.Length);
-        Assert.Equal("00000000000000000000000000", instanceId);
-#else
-        Assert.Skip("Тест актуален только для Debug-сборки (реестр не используется).");
-#endif
-    }
-
-    #endregion
-
-    #region Мастер-ключ (только Windows: реестр + DPAPI)
-
-    /// <summary>
-    /// EnsureMasterKey без параметров возвращает валидный ключ из реестра/кэша,
-    /// повторные вызовы (в том числе после очистки кэша) дают один и тот же ключ.
-    /// Выполняется только на Windows — хранилище HKCU + DPAPI.
-    /// </summary>
-    [Fact]
-    public void EnsureMasterKey_OnWindows_ReturnsStableKey()
-    {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
-
-        byte[]? first = EncryptionService.EnsureMasterKey();
-        Assert.NotNull(first);
-        Assert.Equal(MasterKeySizeBytes, first.Length);
-
-        byte[]? second = EncryptionService.EnsureMasterKey();
-        Assert.NotNull(second);
-        Assert.True(CryptographicOperations.FixedTimeEquals(first, second));
-
-        EncryptionService.ClearMasterKeyCache();
-        byte[]? third = EncryptionService.EnsureMasterKey();
-        Assert.NotNull(third);
-        Assert.True(CryptographicOperations.FixedTimeEquals(first, third));
     }
 
     #endregion
