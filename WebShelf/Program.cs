@@ -15,8 +15,12 @@ const string LogOutputTemplate =
     "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}";
 
 // Лог последнего запуска (только Debug): перед каждым стартом очищается,
-// поэтому содержит лог только текущего запуска
+// поэтому содержит лог только текущего запуска. Объявлена внутри #if DEBUG:
+// в Release-сборке не используется, а вне условной компиляции порождала
+// предупреждение CS0219 (отложенное наблюдение №3, закрыто шагом 9).
+#if DEBUG
 const string LastLogFileName = "Last.log";
+#endif
 
 #if DEBUG
 // Очистка Last.log до создания логгера: sink файла создаётся при конфигурации

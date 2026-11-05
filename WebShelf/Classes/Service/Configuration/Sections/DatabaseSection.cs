@@ -1,8 +1,6 @@
 using Npgsql;
-using Serilog;
 using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DB;
-using WebShelf.Classes.Service;
 
 namespace WebShelf.Classes.Service.Configuration.Sections;
 

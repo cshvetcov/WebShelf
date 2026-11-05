@@ -1,5 +1,4 @@
 using System.Security.Principal;
-using Serilog;
 
 namespace WebShelf.Classes.Service;
 

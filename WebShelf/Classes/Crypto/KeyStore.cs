@@ -1,8 +1,6 @@
-using System;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Win32;
-using Serilog;
 
 namespace WebShelf.Classes.Crypto;
 

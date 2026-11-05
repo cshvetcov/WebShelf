@@ -1,5 +1,4 @@
 using System.Text;
-using Serilog;
 
 namespace WebShelf.Classes.Service.Configuration;
 

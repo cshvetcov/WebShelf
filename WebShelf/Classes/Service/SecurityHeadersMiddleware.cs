@@ -1,8 +1,4 @@
-﻿using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Serilog;
-
-namespace WebShelf.Classes.Service;
+﻿namespace WebShelf.Classes.Service;
 
 /// <summary>
 /// Middleware заголовков безопасности WebShelf.
