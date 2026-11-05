@@ -1,27 +1,31 @@
+using System.Text;
 using WebShelf.Classes.Service;
+using WebShelf.Classes.Service.Configuration;
 using Xunit;
 
 namespace WebShelf.Tests;
 
 /// <summary>
-/// Characterization-тесты парсера Server.conf (<see cref="Data.ReadConfigFile"/>,
-/// шаг 0 дорожной карты декомпозиции). Фиксируют фактическое поведение
-/// разбора key=value до выноса парсера в отдельный класс (шаг 5):
+/// Characterization-тесты парсера Server.conf (<see cref="ServerConfigParser.ReadConfigFile"/>,
+/// шаг 0 дорожной карты декомпозиции; шагом 5 переписаны с вызова
+/// <c>Data.ReadConfigFile</c> на вызов вынесенного парсера — контракт тот же,
+/// ожидания не менялись). Фиксируют фактическое поведение разбора key=value:
 /// ни одно ожидание здесь не является «правильным по замыслу» — все они
-/// сняты с текущей реализации. Тесты платформонезависимы (DPAPI не требуется),
+/// сняты с реализации. Тесты платформонезависимы (DPAPI не требуется),
 /// работают с уникальными временными файлами и не меняют конфигурацию.
 /// </summary>
 public class DataConfigParserTests
 {
     /// <summary>
-    /// Возвращает парсер-обёртку над тестируемым методом: парсер принимает
-    /// путь явно и не зависит от пути, внедрённого в конструктор Data.
+    /// Возвращает результат разбора файла созданным для него парсером:
+    /// путь передаётся конструктору <see cref="ServerConfigParser"/>,
+    /// как это делает Data со своим путём Server.conf.
     /// </summary>
     private static Dictionary<string, string> ParseFile(string path)
     {
-        Data data = new Data();
+        ServerConfigParser parser = new(path);
 
-        return data.ReadConfigFile(path);
+        return parser.ReadConfigFile();
     }
 
     /// <summary>
@@ -390,5 +394,72 @@ public class DataConfigParserTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// Файл без валидных записей (только комментарии и пустые строки)
+    /// разбирается в пустой словарь без исключения: это фактический
+    /// признак «файл не содержит валидных записей», который оркестратор
+    /// <see cref="Data.ReadConfigAsync"/> трактует как ошибку чтения.
+    /// </summary>
+    [Fact]
+    public void ReadConfigFile_NoValidRecords_ReturnsEmptyDictionary()
+    {
+        string directory = DataConfigTestHelpers.CreateTempDirectory();
+        try
+        {
+            string path = Path.Combine(directory, "Server.conf");
+            DataConfigTestHelpers.WriteUtf8NoBom(path,
+                "# только комментарии",
+                "",
+                "   ");
+
+            Dictionary<string, string> config = ParseFile(path);
+
+            Assert.Empty(config);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Файл с переводами строк CRLF (создан редактором Windows) разбирается
+    /// так же, как файл с LF: <see cref="StreamReader.ReadLine"/> отрезает
+    /// оба варианта завершения строки.
+    /// </summary>
+    [Fact]
+    public void ReadConfigFile_CrlfLineEndings_Parsed()
+    {
+        string directory = DataConfigTestHelpers.CreateTempDirectory();
+        try
+        {
+            string path = Path.Combine(directory, "Server.conf");
+            string content = "scheme=http\r\nport=38080\r\n";
+            File.WriteAllBytes(path, Encoding.UTF8.GetBytes(content));
+
+            Dictionary<string, string> config = ParseFile(path);
+
+            Assert.Equal(2, config.Count);
+            Assert.Equal("http", config["scheme"]);
+            Assert.Equal("38080", config["port"]);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Конструктор парсера отклоняет null-путь — новая точка ветвления,
+    /// появившаяся при выносе (раньше путь приходил параметром метода
+    /// от Data, null исключался вызывающей стороной): отказ fail-fast
+    /// до первого обращения к файлу.
+    /// </summary>
+    [Fact]
+    public void ServerConfigParser_Constructor_NullPath_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() => new ServerConfigParser(null!));
     }
 }

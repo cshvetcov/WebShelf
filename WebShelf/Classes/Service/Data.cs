@@ -5,6 +5,7 @@ using Serilog;
 using WebShelf.Classes.DC;
 using WebShelf.Classes.DB;
 using WebShelf.Classes.Security;
+using WebShelf.Classes.Service.Configuration;
 
 namespace WebShelf.Classes.Service;
 
@@ -19,6 +20,11 @@ namespace WebShelf.Classes.Service;
 /// Единственный экземпляр создаётся в Program.Main до сборки хоста — схема и порт
 /// из Server.conf нужны при конфигурации хоста (UseUrls, политика cookie) —
 /// и регистрируется в DI как singleton.
+/// <para>
+/// Разбор файла на словарь ключ=значение выполняет <see cref="ServerConfigParser"/>
+/// (вынесен из Data шагом 5 дорожной карты декомпозиции): Data остаётся
+/// оркестратором — получает словарь у парсера и инициализирует секции.
+/// </para>
 /// </remarks>
 internal sealed class Data
 {
@@ -40,9 +46,17 @@ internal sealed class Data
     /// Полный путь к файлу конфигурации Server.conf.
     /// По умолчанию — <c>AppContext.BaseDirectory/Server.conf</c>;
     /// может быть переопределён конструктором (тестовая точка, улучшение У2
-    /// дорожной карты декомпозиции).
+    /// дорожной карты декомпозиции). Путь передаётся парсеру
+    /// <see cref="ConfigParser"/>.
     /// </summary>
     private string ConfigFile { get; }
+
+    /// <summary>
+    /// Парсер файла Server.conf (вынесен из Data шагом 5 дорожной карты
+    /// декомпозиции): превращает файл в словарь ключ=значение.
+    /// Создаётся один раз на путь <see cref="ConfigFile"/>.
+    /// </summary>
+    private ServerConfigParser ConfigParser { get; }
 
     /// <summary>
     /// Экземпляр домена Active Directory.
@@ -110,6 +124,8 @@ internal sealed class Data
         ConfigFile = string.IsNullOrWhiteSpace(configFile)
             ? Path.Combine(AppContext.BaseDirectory, "Server.conf")
             : configFile;
+
+        ConfigParser = new ServerConfigParser(ConfigFile);
     }
 
     /// <summary>
@@ -214,7 +230,7 @@ internal sealed class Data
                 return false;
             }
 
-            Dictionary<string, string> config = ReadConfigFile(ConfigFile);
+            Dictionary<string, string> config = ConfigParser.ReadConfigFile();
 
             if (config.Count == 0)
             {
@@ -264,75 +280,6 @@ internal sealed class Data
             Scheme = null;
             RoleCacheOptions = null;
             return false;
-        }
-    }
-
-    /// <summary>
-    /// Читает файл конфигурации в словарь ключ=значение.
-    /// Строки-комментарии (начинающиеся с #) и пустые строки игнорируются.
-    /// </summary>
-    /// <remarks>
-    /// Видимость <see langword="internal"/> — тестовая точка (шаг 0 дорожной
-    /// карты декомпозиции): characterization-тесты фиксируют фактическое
-    /// поведение парсера до его выноса в отдельный класс (шаг 5).
-    /// </remarks>
-    internal Dictionary<string, string> ReadConfigFile(string path)
-    {
-        const string method = nameof(ReadConfigFile);
-        Dictionary<string, string> config = new(StringComparer.OrdinalIgnoreCase);
-
-        try
-        {
-            using StreamReader reader = new(path, Encoding.UTF8);
-
-            string? line;
-            int lineNumber = 0;
-
-            while ((line = reader.ReadLine()) is not null)
-            {
-                lineNumber++;
-                string trimmed = line.Trim();
-
-                // Пустые строки и комментарии
-                if (trimmed.Length == 0 || trimmed[0] == '#')
-                    continue;
-
-                int eqIndex = trimmed.IndexOf('=');
-                if (eqIndex <= 0)
-                {
-                    Log.Debug(
-                        "Пропущена некорректная строка конфигурации. Line={LineNumber}, Value={Value}. Class={Class}, Method={Method}",
-                        lineNumber, trimmed, ClassName, method);
-                    continue;
-                }
-
-                string key = trimmed[..eqIndex].Trim();
-                string value = trimmed[(eqIndex + 1)..].Trim();
-
-                if (key.Length == 0)
-                {
-                    Log.Debug(
-                        "Пропущена строка с пустым ключом. Line={LineNumber}. Class={Class}, Method={Method}",
-                        lineNumber, ClassName, method);
-                    continue;
-                }
-
-                // При дубликатах — последнее значение побеждает
-                config[key] = value;
-            }
-
-            Log.Debug(
-                "Файл конфигурации прочитан. Keys={KeyCount}. Class={Class}, Method={Method}",
-                config.Count, ClassName, method);
-
-            return config;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex,
-                "Ошибка чтения файла конфигурации. Class={Class}, Method={Method}, Path={Path}",
-                ClassName, method, path);
-            throw;
         }
     }
 
