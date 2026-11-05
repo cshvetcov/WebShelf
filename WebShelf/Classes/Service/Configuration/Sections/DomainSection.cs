@@ -1,4 +1,5 @@
 using Serilog;
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DC;
 using WebShelf.Classes.Service;
 
@@ -18,7 +19,10 @@ namespace WebShelf.Classes.Service.Configuration.Sections;
 /// и возврат результата вместо мутации состояния <c>Data</c>: метод
 /// возвращает готовый экземпляр <see cref="Domain"/> либо
 /// <see langword="null"/>, присваивание свойству выполняет оркестратор
-/// <see cref="Data.ReadConfigAsync"/>.
+/// <see cref="Data.ReadConfigAsync"/>. Шаг 8 дорожной карты (улучшение У3):
+/// криптография поступает параметрами как инстансные зависимости
+/// <see cref="KeyStore"/> и <see cref="CryptoEngine"/> вместо статических
+/// вызовов фасада — поведение не менялось.
 /// </remarks>
 internal static class DomainSection
 {
@@ -47,6 +51,10 @@ internal static class DomainSection
     /// <param name="instanceIdShort">Короткий InstanceId (12 символов, нижний регистр)
     /// для имён AD-групп WebShelf-{id}-*.</param>
     /// <param name="credentialsWriter">Писатель защищённых учётных данных в Server.conf.</param>
+    /// <param name="keyStore">Хранилище ключей — источник мастер-ключа
+    /// (в Production — singleton из DI; улучшение У3 дорожной карты декомпозиции).</param>
+    /// <param name="cryptoEngine">Криптографический движок — шифрование и
+    /// расшифровка учётных данных (в Production — singleton из DI).</param>
     /// <returns>
     /// Готовый экземпляр <see cref="Domain"/> при успешной инициализации;
     /// <see langword="null"/> — при любой ошибке (отсутствие ключей,
@@ -55,9 +63,14 @@ internal static class DomainSection
     internal static Domain? TryInitDomain(
         Dictionary<string, string> config,
         string instanceIdShort,
-        SecureCredentialsWriter credentialsWriter)
+        SecureCredentialsWriter credentialsWriter,
+        KeyStore keyStore,
+        CryptoEngine cryptoEngine)
     {
         const string method = nameof(TryInitDomain);
+
+        ArgumentNullException.ThrowIfNull(keyStore);
+        ArgumentNullException.ThrowIfNull(cryptoEngine);
 
         try
         {
@@ -82,7 +95,7 @@ internal static class DomainSection
                 return null;
             }
 
-            byte[]? masterKey = EncryptionService.EnsureMasterKey();
+            byte[]? masterKey = keyStore.EnsureMasterKey();
             if (masterKey is null)
             {
                 Log.Error(
@@ -109,8 +122,8 @@ internal static class DomainSection
 
                 try
                 {
-                    plainUser = EncryptionService.Decrypt(encryptedUser, masterKey);
-                    plainPass = EncryptionService.Decrypt(encryptedPass, masterKey);
+                    plainUser = cryptoEngine.Decrypt(encryptedUser, masterKey);
+                    plainPass = cryptoEngine.Decrypt(encryptedPass, masterKey);
                 }
                 catch (Exception ex)
                 {
@@ -178,8 +191,8 @@ internal static class DomainSection
 
                 try
                 {
-                    encryptedUser = EncryptionService.Encrypt(plainUser, masterKey);
-                    encryptedPass = EncryptionService.Encrypt(plainPass, masterKey);
+                    encryptedUser = cryptoEngine.Encrypt(plainUser, masterKey);
+                    encryptedPass = cryptoEngine.Encrypt(plainPass, masterKey);
                 }
                 catch (Exception ex)
                 {
@@ -202,9 +215,10 @@ internal static class DomainSection
                     ClassName, method);
             }
 
-            // В Domain передаём зашифрованные значения и короткий InstanceId
-            // (имена AD-групп WebShelf-{id}-*) — Domain не зависит от хранилища Data
-            Domain domain = new(domainName, instanceIdShort, encryptedUser, encryptedPass);
+            // В Domain передаём зашифрованные значения, короткий InstanceId
+            // (имена AD-групп WebShelf-{id}-*) и криптографические зависимости —
+            // Domain не зависит от хранилища Data
+            Domain domain = new(domainName, instanceIdShort, encryptedUser, encryptedPass, keyStore, cryptoEngine);
 
             Log.Information(
                 "Домен инициализирован. Domain={Domain}, User={User}. Class={Class}, Method={Method}",

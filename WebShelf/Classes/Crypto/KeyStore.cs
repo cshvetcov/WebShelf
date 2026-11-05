@@ -16,11 +16,19 @@ namespace WebShelf.Classes.Crypto;
 /// Класс выделен из <c>EncryptionService</c> механическим переносом
 /// (шаг 3 дорожной карты декомпозиции); изменения при переносе — только
 /// константа <c>Class=</c> в логах перенесённого кода (принцип 6 дорожной карты).
+/// Шаг 8 дорожной карты (улучшение У3): класс переведён со статического на
+/// инстансный — экземпляр создаётся в <c>Program.Main</c> до сборки хоста,
+/// используется <c>Data</c> и инициализаторами секций и регистрируется в DI
+/// как готовый singleton (<c>AddSingleton(instance)</c>); методы объявлены
+/// <see langword="virtual"/>, чтобы юнит-тесты могли подменять хранилище
+/// фейком без обращения к реестру и DPAPI. Поведение не изменилось:
+/// кэш и блокировки перенесены со статического уровня на уровень экземпляра,
+/// в Production экземпляр один.
 /// Ключ привязан к учётной записи процесса. В Production сервис должен
 /// работать под выделенной служебной учёткой (например, DOMAIN\svc_webshelf),
 /// чтобы HKCU и DPAPI относились к ней, а не к интерактивному пользователю.
 /// </remarks>
-internal static class KeyStore
+internal class KeyStore
 {
     private const string ClassName = "WebShelf.Classes.Crypto.KeyStore";
 
@@ -49,21 +57,32 @@ internal static class KeyStore
     private const DataProtectionScope ProtectionScope = DataProtectionScope.CurrentUser;
 
     /// <summary>Sliding-окно: продлевается при каждом использовании кэша.</summary>
-    private static readonly TimeSpan MasterKeyCacheTtl = TimeSpan.FromMinutes(5);
+    private readonly TimeSpan MasterKeyCacheTtl = TimeSpan.FromMinutes(5);
 
     /// <summary>Максимальное время непрерывного хранения ключа в кэше (absolute cap).</summary>
-    private static readonly TimeSpan MasterKeyCacheAbsoluteMax = TimeSpan.FromMinutes(30);
+    private readonly TimeSpan MasterKeyCacheAbsoluteMax = TimeSpan.FromMinutes(30);
 
-    private static readonly object MasterKeyCacheSync = new();
+    private readonly object MasterKeyCacheSync = new();
 
     /// <summary>
     /// Синхронизация чтения/генерации/записи мастер-ключа в реестр:
     /// исключает гонку при первом параллельном вызове EnsureMasterKey.
     /// </summary>
-    private static readonly object RegistrySync = new();
-    private static byte[]? _cachedMasterKey;
-    private static DateTimeOffset _cachedMasterKeyExpiresUtc = DateTimeOffset.MinValue;
-    private static DateTimeOffset _cachedMasterKeyLoadedUtc = DateTimeOffset.MinValue;
+    private readonly object RegistrySync = new();
+    private byte[]? _cachedMasterKey;
+    private DateTimeOffset _cachedMasterKeyExpiresUtc = DateTimeOffset.MinValue;
+    private DateTimeOffset _cachedMasterKeyLoadedUtc = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Создаёт экземпляр <see cref="KeyStore"/>.
+    /// Производственный код создаёт один экземпляр в <c>Program.Main</c>
+    /// и регистрирует его в DI как singleton; юнит-тесты создают независимые
+    /// экземпляры (кэш и блокировки — на уровне экземпляра) или подменяют
+    /// класс фейком (улучшение У3 дорожной карты декомпозиции).
+    /// </summary>
+    public KeyStore()
+    {
+    }
 
     #region Создание ключа
 
@@ -72,7 +91,7 @@ internal static class KeyStore
     /// </summary>
     /// <returns>Массив из 32 криптографически стойких случайных байт.</returns>
     /// <exception cref="CryptographicException">При сбое генератора случайных чисел.</exception>
-    internal static byte[] CreateKey()
+    internal virtual byte[] CreateKey()
     {
         const string method = nameof(CreateKey);
 
@@ -102,7 +121,7 @@ internal static class KeyStore
     /// </summary>
     /// <returns>Ключ в кодировке Base64.</returns>
     /// <exception cref="CryptographicException">При сбое генератора случайных чисел.</exception>
-    internal static string CreateKeyBase64()
+    internal virtual string CreateKeyBase64()
     {
         const string method = nameof(CreateKeyBase64);
 
@@ -141,7 +160,7 @@ internal static class KeyStore
     /// InstanceId из нулей (<see cref="DebugFixedInstanceId"/>), чтобы экземпляры
     /// на разных компьютерах при отладке ссылались на одни и те же AD-группы.
     /// </remarks>
-    internal static string? EnsureInstanceId()
+    internal virtual string? EnsureInstanceId()
     {
         const string method = nameof(EnsureInstanceId);
 
@@ -330,8 +349,11 @@ internal static class KeyStore
     /// Хранение всегда в HKCU под <see cref="DataProtectionScope.CurrentUser"/>.
     /// Расшифровать blob может только код, работающий под той же учётной записью Windows.
     /// В памяти ключ кэшируется со sliding TTL (5 мин) и absolute max (30 мин).
+    /// Метод <see langword="virtual"/>: юнит-тесты подменяют его фейком,
+    /// возвращающим синтетический ключ без обращения к реестру и DPAPI
+    /// (улучшение У3 дорожной карты декомпозиции).
     /// </remarks>
-    internal static byte[]? EnsureMasterKey(byte[]? key = null)
+    internal virtual byte[]? EnsureMasterKey(byte[]? key = null)
     {
         const string method = nameof(EnsureMasterKey);
 
@@ -496,7 +518,7 @@ internal static class KeyStore
     /// <summary>
     /// Принудительно очищает кэш мастер-ключа (обнуление памяти).
     /// </summary>
-    internal static void ClearMasterKeyCache()
+    internal virtual void ClearMasterKeyCache()
     {
         const string method = nameof(ClearMasterKeyCache);
 
@@ -585,7 +607,7 @@ internal static class KeyStore
     /// Возвращает копию ключа из кэша с sliding TTL и absolute max.
     /// Если окно истекло или превышен потолок непрерывного хранения — очищает кэш и возвращает <see langword="null"/>.
     /// </summary>
-    private static byte[]? TryGetCachedMasterKey()
+    private byte[]? TryGetCachedMasterKey()
     {
         lock (MasterKeyCacheSync)
         {
@@ -619,7 +641,7 @@ internal static class KeyStore
     /// <summary>
     /// Сохраняет копию ключа в кэш: фиксирует момент загрузки и начальный срок sliding TTL.
     /// </summary>
-    private static void SetCachedMasterKey(byte[] key)
+    private void SetCachedMasterKey(byte[] key)
     {
         lock (MasterKeyCacheSync)
         {
@@ -635,7 +657,7 @@ internal static class KeyStore
     /// <summary>
     /// Очистка кэша без захвата блокировки (вызывать только внутри <see cref="MasterKeyCacheSync"/>).
     /// </summary>
-    private static void ClearCachedMasterKey_NoLock()
+    private void ClearCachedMasterKey_NoLock()
     {
         if (_cachedMasterKey is not null)
         {
@@ -651,9 +673,8 @@ internal static class KeyStore
 
     /// <summary>
     /// Обнуляет массив с ключевым материалом в памяти.
-    /// Собственная копия хелпера EncryptionService (обнуление массива):
-    /// классы намеренно не зависят друг от друга — криптографическое ядро
-    /// остаётся в EncryptionService до шага 4 дорожной карты декомпозиции.
+    /// Собственный хелпер (обнуление массива): классы намеренно
+    /// не зависят друг от друга.
     /// </summary>
     private static void ClearKeyMaterial(byte[]? key)
     {

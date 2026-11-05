@@ -1,4 +1,5 @@
 using System.Security.Cryptography.X509Certificates;
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DB;
 using WebShelf.Classes.DC;
 using WebShelf.Classes.Service;
@@ -12,11 +13,13 @@ namespace WebShelf.Tests;
 /// Прямые тесты инициализаторов секций конфигурации, вынесенных из Data
 /// шагом 6 дорожной карты декомпозиции (DomainSection, DatabaseSection,
 /// CertificateSection — точка решения о секциях). Покрывают ветки,
-/// не требующие мастер-ключа (HKCU + DPAPI) и обращения к сети,
-/// поэтому выполняются на любой платформе; сценарии с реальным
-/// шифрованием и миграцией учётных данных остаются на уровне
+/// не требующие мастер-ключа и обращения к сети, поэтому выполняются
+/// на любой платформе (шаг 8 декомпозиции: секции получают криптографию
+/// параметрами — подмена хранилища ключей и реальный движок); сценарии
+/// с шифрованием и миграцией учётных данных остаются на уровне
 /// <see cref="Data.ReadConfigAsync"/> в DataConfigMigrationTests
-/// (Windows-only) и у перенесённых characterization-тестов записи.
+/// (после шага 8 — на подмене хранилища, платформонезависимые)
+/// и у перенесённых characterization-тестов записи.
 /// </summary>
 public class DataConfigSectionsTests
 {
@@ -37,7 +40,8 @@ public class DataConfigSectionsTests
                 ["scheme"] = "http",
             };
 
-            Domain? domain = DomainSection.TryInitDomain(config, "0123456789ab", writer);
+            Domain? domain = DomainSection.TryInitDomain(
+                config, "0123456789ab", writer, new CryptoTestFakes.FakeKeyStore(), new CryptoEngine());
 
             Assert.Null(domain);
         }
@@ -64,7 +68,8 @@ public class DataConfigSectionsTests
                 ["domainname"] = "   ",
             };
 
-            Domain? domain = DomainSection.TryInitDomain(config, "0123456789ab", writer);
+            Domain? domain = DomainSection.TryInitDomain(
+                config, "0123456789ab", writer, new CryptoTestFakes.FakeKeyStore(), new CryptoEngine());
 
             Assert.Null(domain);
         }
@@ -91,7 +96,8 @@ public class DataConfigSectionsTests
                 ["dbname"] = "webshelf_test",
             };
 
-            Database? database = await DatabaseSection.TryInitDatabaseAsync(config, writer);
+            Database? database = await DatabaseSection.TryInitDatabaseAsync(
+                config, writer, new CryptoTestFakes.FakeKeyStore(), new CryptoEngine());
 
             Assert.Null(database);
         }
@@ -120,7 +126,7 @@ public class DataConfigSectionsTests
             };
 
             bool result = CertificateSection.TryInitCertificate(
-                config, "http", writer, out X509Certificate2? certificate);
+                config, "http", writer, new CryptoTestFakes.FakeKeyStore(), new CryptoEngine(), out X509Certificate2? certificate);
 
             Assert.True(result);
             Assert.Null(certificate);
@@ -129,5 +135,34 @@ public class DataConfigSectionsTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// Инициализаторы секций отклоняют null-криптографические зависимости
+    /// (новые публичные границы шага 8): TryInitDomain, TryInitDatabaseAsync
+    /// и TryInitCertificate завершаются ArgumentNullException до любой
+    /// обработки конфигурации. Проверяется до обращения к файлу конфигурации —
+    /// временный каталог не требуется.
+    /// </summary>
+    [Fact]
+    public async Task TryInitSections_NullCryptoDependencies_ThrowArgumentNullException()
+    {
+        SecureCredentialsWriter writer = new(Path.Combine(Path.GetTempPath(), "WebShelfStep8NullCheck", "Server.conf"));
+        Dictionary<string, string> config = new(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Throws<ArgumentNullException>(() =>
+            DomainSection.TryInitDomain(config, "0123456789ab", writer, null!, new CryptoEngine()));
+        Assert.Throws<ArgumentNullException>(() =>
+            DomainSection.TryInitDomain(config, "0123456789ab", writer, new CryptoTestFakes.FakeKeyStore(), null!));
+
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            DatabaseSection.TryInitDatabaseAsync(config, writer, null!, new CryptoEngine()));
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            DatabaseSection.TryInitDatabaseAsync(config, writer, new CryptoTestFakes.FakeKeyStore(), null!));
+
+        Assert.Throws<ArgumentNullException>(() =>
+            CertificateSection.TryInitCertificate(config, "https", writer, null!, new CryptoEngine(), out _));
+        Assert.Throws<ArgumentNullException>(() =>
+            CertificateSection.TryInitCertificate(config, "https", writer, new CryptoTestFakes.FakeKeyStore(), null!, out _));
     }
 }

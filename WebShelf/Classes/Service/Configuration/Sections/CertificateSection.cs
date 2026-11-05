@@ -1,5 +1,6 @@
 using System.Security.Cryptography.X509Certificates;
 using Serilog;
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.Service;
 
 namespace WebShelf.Classes.Service.Configuration.Sections;
@@ -16,6 +17,9 @@ namespace WebShelf.Classes.Service.Configuration.Sections;
 /// и возврат результата вместо мутации состояния <c>Data</c>: метод
 /// возвращает загруженный сертификат через выходной параметр,
 /// присваивание свойству выполняет оркестратор <see cref="Data.ReadConfigAsync"/>.
+/// Шаг 8 дорожной карты (улучшение У3): криптография поступает параметрами
+/// как инстансные зависимости <see cref="KeyStore"/> и <see cref="CryptoEngine"/>
+/// вместо статических вызовов фасада — поведение не менялось.
 /// </remarks>
 internal static class CertificateSection
 {
@@ -32,6 +36,10 @@ internal static class CertificateSection
     /// <param name="scheme">Схема прослушивания, установленная оркестратором
     /// к моменту вызова; сертификат требуется только при <c>https</c>.</param>
     /// <param name="credentialsWriter">Писатель защищённых учётных данных в Server.conf.</param>
+    /// <param name="keyStore">Хранилище ключей — источник мастер-ключа
+    /// (в Production — singleton из DI; улучшение У3 дорожной карты декомпозиции).</param>
+    /// <param name="cryptoEngine">Криптографический движок — расшифровка и
+    /// шифрование пароля сертификата (в Production — singleton из DI).</param>
     /// <param name="certificate">Выходной параметр: загруженный сертификат
     /// либо <see langword="null"/> (не требуется или ошибка).</param>
     /// <returns><see langword="true"/>, если сертификат загружен или не требуется; иначе <see langword="false"/>.</returns>
@@ -39,9 +47,14 @@ internal static class CertificateSection
         Dictionary<string, string> config,
         string? scheme,
         SecureCredentialsWriter credentialsWriter,
+        KeyStore keyStore,
+        CryptoEngine cryptoEngine,
         out X509Certificate2? certificate)
     {
         const string method = nameof(TryInitCertificate);
+
+        ArgumentNullException.ThrowIfNull(keyStore);
+        ArgumentNullException.ThrowIfNull(cryptoEngine);
 
         certificate = null;
 
@@ -76,7 +89,7 @@ internal static class CertificateSection
                 return false;
             }
 
-            byte[]? masterKey = EncryptionService.EnsureMasterKey();
+            byte[]? masterKey = keyStore.EnsureMasterKey();
             if (masterKey is null)
             {
                 Log.Error(
@@ -96,7 +109,7 @@ internal static class CertificateSection
             {
                 try
                 {
-                    password = EncryptionService.Decrypt(sPass!.Trim(), masterKey);
+                    password = cryptoEngine.Decrypt(sPass!.Trim(), masterKey);
                 }
                 catch (Exception ex)
                 {
@@ -130,7 +143,7 @@ internal static class CertificateSection
 
                 try
                 {
-                    string encryptedPass = EncryptionService.Encrypt(password, masterKey);
+                    string encryptedPass = cryptoEngine.Encrypt(password, masterKey);
                     if (!credentialsWriter.WriteSecureCredentials(SecureCredentialsWriter.TlsCredentialKeys, null, encryptedPass))
                     {
                         Log.Error(

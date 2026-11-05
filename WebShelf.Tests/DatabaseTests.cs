@@ -1,4 +1,5 @@
 using Npgsql;
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DB;
 using WebShelf.Classes.Service;
 using Xunit;
@@ -9,12 +10,15 @@ namespace WebShelf.Tests;
 /// Тесты класса Database: валидация параметров конструктора.
 /// Проверки ArgumentException выполняются до обращения к мастер-ключу,
 /// поэтому работают на любой ОС. Полный конструктор (расшифровка учётных
-/// данных, создание NpgsqlDataSource) требует Windows-хранилища мастер-ключа.
+/// данных, создание NpgsqlDataSource) тестируется с подменой хранилища
+/// ключей (<see cref="CryptoTestFakes.FakeKeyStore"/>) и реальным движком
+/// — улучшение У3 шага 8: реестр и DPAPI не затрагиваются, создание
+/// <see cref="NpgsqlDataSource"/> не подключается к сети.
 /// </summary>
 /// <remarks>
-/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>:
-/// тесты используют реестровый мастер-ключ, с которым работают тесты KeyStoreTests
-/// (временная подмена значения реестра исключает параллельное выполнение).
+/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>
+/// (сохранена сериализация с реестровыми тестами KeyStoreTests; собственно
+/// реестр тесты этого класса после шага 8 не используют).
 /// </remarks>
 [Collection(KeyStoreTests.MasterKeyRegistryCollection)]
 public class DatabaseTests
@@ -29,7 +33,7 @@ public class DatabaseTests
     public void Constructor_EmptyHost_ThrowsArgumentException(string? host)
     {
         Assert.Throws<ArgumentException>(() =>
-            new Database(host!, 5432, "webshelf", SslMode.Require, "encUser", "encPass"));
+            new Database(host!, 5432, "webshelf", SslMode.Require, "encUser", "encPass", new CryptoTestFakes.FakeKeyStore(), new CryptoEngine()));
     }
 
     /// <summary>
@@ -42,7 +46,7 @@ public class DatabaseTests
     public void Constructor_InvalidPort_ThrowsArgumentException(int port)
     {
         Assert.Throws<ArgumentException>(() =>
-            new Database("localhost", port, "webshelf", SslMode.Require, "encUser", "encPass"));
+            new Database("localhost", port, "webshelf", SslMode.Require, "encUser", "encPass", new CryptoTestFakes.FakeKeyStore(), new CryptoEngine()));
     }
 
     /// <summary>
@@ -55,7 +59,7 @@ public class DatabaseTests
     public void Constructor_EmptyDatabaseName_ThrowsArgumentException(string? databaseName)
     {
         Assert.Throws<ArgumentException>(() =>
-            new Database("localhost", 5432, databaseName!, SslMode.Require, "encUser", "encPass"));
+            new Database("localhost", 5432, databaseName!, SslMode.Require, "encUser", "encPass", new CryptoTestFakes.FakeKeyStore(), new CryptoEngine()));
     }
 
     /// <summary>
@@ -72,27 +76,49 @@ public class DatabaseTests
         string? encryptedUser, string? encryptedPassword)
     {
         Assert.Throws<ArgumentException>(() =>
-            new Database("localhost", 5432, "webshelf", SslMode.Require, encryptedUser!, encryptedPassword!));
+            new Database("localhost", 5432, "webshelf", SslMode.Require, encryptedUser!, encryptedPassword!, new CryptoTestFakes.FakeKeyStore(), new CryptoEngine()));
     }
 
     /// <summary>
-    /// Полный конструктор на Windows: расшифровывает учётные данные,
-    /// создаёт NpgsqlDataSource и сохраняет параметры подключения.
+    /// Конструктор отклоняет null-хранилище ключей (новая публичная граница
+    /// шага 8: криптографические зависимости обязательны).
     /// </summary>
     [Fact]
-    public async Task Constructor_OnWindows_ValidParameters_InitializesConnectionSource()
+    public void Constructor_NullKeyStore_ThrowsArgumentNullException()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
+        Assert.Throws<ArgumentNullException>(() =>
+            new Database("localhost", 5432, "webshelf", SslMode.Require, "encUser", "encPass", null!, new CryptoEngine()));
+    }
 
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
+    /// <summary>
+    /// Конструктор отклоняет null-движок шифрования (новая публичная граница
+    /// шага 8: криптографические зависимости обязательны).
+    /// </summary>
+    [Fact]
+    public void Constructor_NullCryptoEngine_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new Database("localhost", 5432, "webshelf", SslMode.Require, "encUser", "encPass", new CryptoTestFakes.FakeKeyStore(), null!));
+    }
 
-        string encryptedUser = EncryptionService.Encrypt("db_webshelf", key);
-        string encryptedPass = EncryptionService.Encrypt("TestPassword123!", key);
+    /// <summary>
+    /// Полный конструктор: расшифровывает учётные данные ключом из подмены
+    /// хранилища, создаёт NpgsqlDataSource и сохраняет параметры подключения.
+    /// Реестр и DPAPI не затрагиваются — тест выполняется на любой ОС
+    /// (ранее — только Windows).
+    /// </summary>
+    [Fact]
+    public async Task Constructor_WithFakeKeyStore_ValidParameters_InitializesConnectionSource()
+    {
+        KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
+        CryptoEngine cryptoEngine = new CryptoEngine();
+        byte[] key = keyStore.EnsureMasterKey()!;
+
+        string encryptedUser = cryptoEngine.Encrypt("db_webshelf", key);
+        string encryptedPass = cryptoEngine.Encrypt("TestPassword123!", key);
 
         await using Database database = new Database(
-            "localhost", 5432, "webshelf_test", SslMode.Prefer, encryptedUser, encryptedPass);
+            "localhost", 5432, "webshelf_test", SslMode.Prefer, encryptedUser, encryptedPass, keyStore, cryptoEngine);
 
         Assert.Equal("localhost", database.Host);
         Assert.Equal(5432, database.Port);
@@ -102,21 +128,21 @@ public class DatabaseTests
 
     /// <summary>
     /// Повторный Dispose идемпотентен и не выбрасывает исключений.
+    /// Мастер-ключ поступает из подмены хранилища — реестр и DPAPI
+    /// не затрагиваются (ранее — только Windows).
     /// </summary>
     [Fact]
     public void Dispose_CalledTwice_IsIdempotent()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
+        KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
+        CryptoEngine cryptoEngine = new CryptoEngine();
+        byte[] key = keyStore.EnsureMasterKey()!;
 
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
-
-        string encryptedUser = EncryptionService.Encrypt("db_webshelf", key);
-        string encryptedPass = EncryptionService.Encrypt("TestPassword123!", key);
+        string encryptedUser = cryptoEngine.Encrypt("db_webshelf", key);
+        string encryptedPass = cryptoEngine.Encrypt("TestPassword123!", key);
 
         Database database = new Database(
-            "localhost", 5432, "webshelf_test", SslMode.Prefer, encryptedUser, encryptedPass);
+            "localhost", 5432, "webshelf_test", SslMode.Prefer, encryptedUser, encryptedPass, keyStore, cryptoEngine);
 
         database.Dispose();
         database.Dispose();

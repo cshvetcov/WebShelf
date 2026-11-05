@@ -1,3 +1,4 @@
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.Service;
 using Xunit;
 
@@ -6,12 +7,14 @@ namespace WebShelf.Tests;
 /// <summary>
 /// Тесты хранилища системных данных Data: жизненный цикл InstanceId,
 /// свойство InstanceIdShort и отказные сценарии чтения конфигурации.
+/// Шаг 8 декомпозиции (улучшение У3): Data создаётся с подменой хранилища
+/// ключей и реальным движком (<see cref="DataConfigTestHelpers.CreateData"/>) —
+/// отказные сценарии завершаются до обращения к криптографии.
 /// </summary>
 /// <remarks>
-/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>:
-/// чтение конфигурации может обращаться к реестровому мастер-ключу, с которым
-/// работают тесты KeyStoreTests (временная подмена значения реестра исключает
-/// параллельное выполнение).
+/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>
+/// (сохранена сериализация с реестровыми тестами KeyStoreTests; собственно
+/// реестр тесты этого класса после шага 8 не используют).
 /// </remarks>
 [Collection(KeyStoreTests.MasterKeyRegistryCollection)]
 public class DataTests
@@ -26,7 +29,7 @@ public class DataTests
     [Fact]
     public void InstanceId_BeforeInitialization_ThrowsInvalidOperationException()
     {
-        Data data = new Data();
+        Data data = DataConfigTestHelpers.CreateData();
 
         Assert.Throws<InvalidOperationException>(() => _ = data.InstanceId);
     }
@@ -39,7 +42,7 @@ public class DataTests
     [InlineData("  ABCDEFGHIJKLMNOPQRSTUVWXY  ", "ABCDEFGHIJKLMNOPQRSTUVWXY")]
     public void SetInstanceId_ValidValue_SetsTrimmedValue(string value, string expected)
     {
-        Data data = new Data();
+        Data data = DataConfigTestHelpers.CreateData();
 
         data.SetInstanceId(value);
 
@@ -55,7 +58,7 @@ public class DataTests
     [InlineData("   ")]
     public void SetInstanceId_EmptyValue_ThrowsArgumentException(string? value)
     {
-        Data data = new Data();
+        Data data = DataConfigTestHelpers.CreateData();
 
         Assert.Throws<ArgumentException>(() => data.SetInstanceId(value!));
     }
@@ -67,7 +70,7 @@ public class DataTests
     [Fact]
     public void SetInstanceId_SecondCall_ThrowsInvalidOperationException()
     {
-        Data data = new Data();
+        Data data = DataConfigTestHelpers.CreateData();
         data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
         Assert.Throws<InvalidOperationException>(() =>
@@ -80,7 +83,7 @@ public class DataTests
     [Fact]
     public void InstanceIdShort_FullUlid_ReturnsFirst12Lowercase()
     {
-        Data data = new Data();
+        Data data = DataConfigTestHelpers.CreateData();
         data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
         Assert.Equal("0123456789ab", data.InstanceIdShort);
@@ -93,7 +96,7 @@ public class DataTests
     [Fact]
     public void InstanceIdShort_ShortValue_ReturnsWholeValueLowercase()
     {
-        Data data = new Data();
+        Data data = DataConfigTestHelpers.CreateData();
         data.SetInstanceId("ABCDEF");
 
         Assert.Equal("abcdef", data.InstanceIdShort);
@@ -105,9 +108,31 @@ public class DataTests
     [Fact]
     public void TlsCertificate_BeforeInitialization_IsNull()
     {
-        Data data = new Data();
+        Data data = DataConfigTestHelpers.CreateData();
 
         Assert.Null(data.TlsCertificate);
+    }
+
+    /// <summary>
+    /// Конструктор отклоняет null-хранилище ключей (новая публичная граница
+    /// шага 8: криптографические зависимости обязательны).
+    /// </summary>
+    [Fact]
+    public void Constructor_NullKeyStore_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new Data(null!, new CryptoEngine()));
+    }
+
+    /// <summary>
+    /// Конструктор отклоняет null-движок шифрования (новая публичная граница
+    /// шага 8: криптографические зависимости обязательны).
+    /// </summary>
+    [Fact]
+    public void Constructor_NullCryptoEngine_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new Data(new CryptoTestFakes.FakeKeyStore(), null!));
     }
 
     /// <summary>
@@ -116,7 +141,7 @@ public class DataTests
     [Fact]
     public async Task ReadConfigAsync_WithoutInstanceId_ReturnsFalse()
     {
-        Data data = new Data();
+        Data data = DataConfigTestHelpers.CreateData();
 
         bool result = await data.ReadConfigAsync();
 
@@ -134,7 +159,7 @@ public class DataTests
         Assert.SkipWhen(File.Exists(ConfigFilePath),
             $"В выходном каталоге тестов присутствует {ConfigFilePath} — сценарий неприменим.");
 
-        Data data = new Data();
+        Data data = DataConfigTestHelpers.CreateData();
         data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
         bool result = await data.ReadConfigAsync();

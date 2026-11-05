@@ -1,5 +1,6 @@
 using Npgsql;
 using Serilog;
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DB;
 using WebShelf.Classes.Service;
 
@@ -18,7 +19,10 @@ namespace WebShelf.Classes.Service.Configuration.Sections;
 /// и возврат результата вместо мутации состояния <c>Data</c>: метод
 /// возвращает готовый экземпляр <see cref="Database"/> либо
 /// <see langword="null"/>, присваивание свойству выполняет оркестратор
-/// <see cref="Data.ReadConfigAsync"/>.
+/// <see cref="Data.ReadConfigAsync"/>. Шаг 8 дорожной карты (улучшение У3):
+/// криптография поступает параметрами как инстансные зависимости
+/// <see cref="KeyStore"/> и <see cref="CryptoEngine"/> вместо статических
+/// вызовов фасада — поведение не менялось.
 /// </remarks>
 internal static class DatabaseSection
 {
@@ -38,6 +42,10 @@ internal static class DatabaseSection
     /// </summary>
     /// <param name="config">Словарь конфигурации (результат разбора Server.conf).</param>
     /// <param name="credentialsWriter">Писатель защищённых учётных данных в Server.conf.</param>
+    /// <param name="keyStore">Хранилище ключей — источник мастер-ключа
+    /// (в Production — singleton из DI; улучшение У3 дорожной карты декомпозиции).</param>
+    /// <param name="cryptoEngine">Криптографический движок — шифрование
+    /// учётных данных (в Production — singleton из DI).</param>
     /// <returns>
     /// Готовый экземпляр <see cref="Database"/> при успешной инициализации;
     /// <see langword="null"/> — при любой ошибке (отсутствие ключей,
@@ -46,9 +54,14 @@ internal static class DatabaseSection
     /// </returns>
     internal static async Task<Database?> TryInitDatabaseAsync(
         Dictionary<string, string> config,
-        SecureCredentialsWriter credentialsWriter)
+        SecureCredentialsWriter credentialsWriter,
+        KeyStore keyStore,
+        CryptoEngine cryptoEngine)
     {
         const string method = nameof(TryInitDatabaseAsync);
+
+        ArgumentNullException.ThrowIfNull(keyStore);
+        ArgumentNullException.ThrowIfNull(cryptoEngine);
 
         Database? database = null;
 
@@ -106,7 +119,7 @@ internal static class DatabaseSection
                     ClassName, method);
             }
 
-            byte[]? masterKey = EncryptionService.EnsureMasterKey();
+            byte[]? masterKey = keyStore.EnsureMasterKey();
             if (masterKey is null)
             {
                 Log.Error(
@@ -179,8 +192,8 @@ internal static class DatabaseSection
 
                 try
                 {
-                    encryptedUser = EncryptionService.Encrypt(plainUser, masterKey);
-                    encryptedPass = EncryptionService.Encrypt(plainPass, masterKey);
+                    encryptedUser = cryptoEngine.Encrypt(plainUser, masterKey);
+                    encryptedPass = cryptoEngine.Encrypt(plainPass, masterKey);
                 }
                 catch (Exception ex)
                 {
@@ -203,7 +216,7 @@ internal static class DatabaseSection
                     ClassName, method);
             }
 
-            database = new Database(host.Trim(), port, dbName.Trim(), sslMode, encryptedUser, encryptedPass);
+            database = new Database(host.Trim(), port, dbName.Trim(), sslMode, encryptedUser, encryptedPass, keyStore, cryptoEngine);
 
             Log.Information(
                 "БД инициализирована. Host={Host}, Port={Port}, Database={Database}, SslMode={SslMode}, User={User}. Class={Class}, Method={Method}",

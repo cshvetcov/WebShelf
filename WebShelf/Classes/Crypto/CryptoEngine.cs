@@ -20,10 +20,13 @@ namespace WebShelf.Classes.Crypto;
 /// данные в этом формате, изменение любого байта схемы (версия, метки вывода
 /// ключей, порядок полей, алгоритмы) делает конфиги нечитаемыми.
 /// Движок не зависит от реестра и DPAPI и работает с явно переданным ключом —
-/// тестируется на любой ОС. Статический фасад <see cref="EncryptionService"/>
-/// сохраняется до шага 8 дорожной карты.
+/// тестируется на любой ОС. Шаг 8 дорожной карты (улучшение У3): класс
+/// переведён со статического на инстансный и регистрируется в DI как готовый
+/// singleton (<c>AddSingleton(instance)</c>); перегрузки объявлены
+/// <see langword="virtual"/>, чтобы юнит-тесты могли подменять движок фейком.
+/// Поведение не изменилось: движок не содержит состояния.
 /// </remarks>
-internal static class CryptoEngine
+internal class CryptoEngine
 {
     private const string ClassName = "WebShelf.Classes.Crypto.CryptoEngine";
 
@@ -41,6 +44,15 @@ internal static class CryptoEngine
 
     private static readonly byte[] HmacKeyDerivationLabel = Encoding.UTF8.GetBytes("WebShelf.Classes.Service.EncryptionService.HMAC.v1");
 
+    /// <summary>
+    /// Создаёт экземпляр <see cref="CryptoEngine"/>.
+    /// Производственный код создаёт один экземпляр в <c>Program.Main</c>
+    /// и регистрирует его в DI как singleton; движок не содержит состояния.
+    /// </summary>
+    public CryptoEngine()
+    {
+    }
+
     #region Шифрование byte[]
 
     /// <summary>
@@ -57,7 +69,7 @@ internal static class CryptoEngine
     /// </exception>
     /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам.</exception>
     /// <exception cref="CryptographicException">Ошибка криптографической операции.</exception>
-    internal static byte[] Encrypt(byte[] data, byte[] key)
+    internal virtual byte[] Encrypt(byte[] data, byte[] key)
     {
         const string method = nameof(Encrypt);
 
@@ -149,7 +161,7 @@ internal static class CryptoEngine
     /// <exception cref="FormatException">Некорректная Base64-строка ключа.</exception>
     /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам.</exception>
     /// <exception cref="CryptographicException">Ошибка криптографической операции.</exception>
-    internal static byte[] Encrypt(byte[] data, string base64Key)
+    internal virtual byte[] Encrypt(byte[] data, string base64Key)
     {
         const string method = nameof(Encrypt);
 
@@ -201,7 +213,7 @@ internal static class CryptoEngine
     /// </exception>
     /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам.</exception>
     /// <exception cref="CryptographicException">Ошибка криптографической операции.</exception>
-    internal static string Encrypt(string plainText, byte[] key)
+    internal virtual string Encrypt(string plainText, byte[] key)
     {
         const string method = nameof(Encrypt);
 
@@ -246,7 +258,7 @@ internal static class CryptoEngine
     /// <exception cref="FormatException">Некорректная Base64-строка ключа.</exception>
     /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам.</exception>
     /// <exception cref="CryptographicException">Ошибка криптографической операции.</exception>
-    internal static string Encrypt(string plainText, string base64Key)
+    internal virtual string Encrypt(string plainText, string base64Key)
     {
         const string method = nameof(Encrypt);
 
@@ -302,7 +314,7 @@ internal static class CryptoEngine
     /// <exception cref="CryptographicException">
     /// Некорректный формат, неверная версия, сбой проверки MAC или ошибка расшифровки.
     /// </exception>
-    internal static byte[] Decrypt(byte[] encryptedData, byte[] key)
+    internal virtual byte[] Decrypt(byte[] encryptedData, byte[] key)
     {
         const string method = nameof(Decrypt);
 
@@ -426,7 +438,7 @@ internal static class CryptoEngine
     /// <exception cref="FormatException">Некорректная Base64-строка ключа.</exception>
     /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам.</exception>
     /// <exception cref="CryptographicException">Ошибка проверки целостности или расшифровки.</exception>
-    internal static byte[] Decrypt(byte[] encryptedData, string base64Key)
+    internal virtual byte[] Decrypt(byte[] encryptedData, string base64Key)
     {
         const string method = nameof(Decrypt);
 
@@ -479,7 +491,7 @@ internal static class CryptoEngine
     /// <exception cref="FormatException">Некорректная Base64-строка данных.</exception>
     /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам.</exception>
     /// <exception cref="CryptographicException">Ошибка проверки целостности или расшифровки.</exception>
-    internal static string Decrypt(string encryptedBase64, byte[] key)
+    internal virtual string Decrypt(string encryptedBase64, byte[] key)
     {
         const string method = nameof(Decrypt);
 
@@ -530,7 +542,7 @@ internal static class CryptoEngine
     /// <exception cref="FormatException">Некорректная Base64-строка.</exception>
     /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам.</exception>
     /// <exception cref="CryptographicException">Ошибка проверки целостности или расшифровки.</exception>
-    internal static string Decrypt(string encryptedBase64, string base64Key)
+    internal virtual string Decrypt(string encryptedBase64, string base64Key)
     {
         const string method = nameof(Decrypt);
 

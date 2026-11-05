@@ -1,5 +1,6 @@
 using Npgsql;
 using Serilog;
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.Service;
 
 namespace WebShelf.Classes.DB;
@@ -13,6 +14,11 @@ namespace WebShelf.Classes.DB;
 /// Учётные данные сервисной записи БД хранятся только в зашифрованном виде
 /// (мастер-ключ). Перед использованием расшифровываются. Пароли и реальные
 /// имена учётных записей в логи не попадают.
+/// Шаг 8 дорожной карты (улучшение У3): криптография поступает через
+/// конструктор как инстансные зависимости <see cref="KeyStore"/> и
+/// <see cref="CryptoEngine"/> (в Production — singleton'ы, созданные в
+/// <c>Program.Main</c>) вместо статических вызовов фасада — сигнатура
+/// конструктора изменена, поведение не менялось.
 /// </remarks>
 internal sealed class Database : IAsyncDisposable, IDisposable
 {
@@ -46,9 +52,21 @@ internal sealed class Database : IAsyncDisposable, IDisposable
     private bool _disposed;
 
     /// <summary>
+    /// Хранилище ключей: мастер-ключ для расшифровки учётных данных
+    /// (в Production — singleton из DI, улучшение У3 дорожной карты декомпозиции).
+    /// </summary>
+    private readonly KeyStore _keyStore;
+
+    /// <summary>
+    /// Криптографический движок: расшифровка учётных данных
+    /// (в Production — singleton из DI, улучшение У3 дорожной карты декомпозиции).
+    /// </summary>
+    private readonly CryptoEngine _cryptoEngine;
+
+    /// <summary>
     /// Создаёт экземпляр <see cref="Database"/>.
     /// Параметры <paramref name="encryptedUser"/> и <paramref name="encryptedPassword"/>
-    /// должны быть уже зашифрованы мастер-ключом (<see cref="EncryptionService"/>).
+    /// должны быть уже зашифрованы мастер-ключом (<see cref="CryptoEngine"/>).
     /// </summary>
     /// <param name="host">Хост PostgreSQL.</param>
     /// <param name="port">Порт PostgreSQL.</param>
@@ -56,6 +74,13 @@ internal sealed class Database : IAsyncDisposable, IDisposable
     /// <param name="sslMode">Режим SSL/TLS.</param>
     /// <param name="encryptedUser">Зашифрованное имя сервисной учётной записи (Base64).</param>
     /// <param name="encryptedPassword">Зашифрованный пароль сервисной учётной записи (Base64).</param>
+    /// <param name="keyStore">Хранилище ключей — источник мастер-ключа
+    /// (в Production — singleton из DI; улучшение У3 дорожной карты декомпозиции).</param>
+    /// <param name="cryptoEngine">Криптографический движок — расшифровка
+    /// учётных данных (в Production — singleton из DI).</param>
+    /// <exception cref="ArgumentNullException">
+    /// Возникает, если <paramref name="keyStore"/> или <paramref name="cryptoEngine"/> равен <see langword="null"/>.
+    /// </exception>
     /// <exception cref="ArgumentException">
     /// Возникает, если host, databaseName пустые, порт вне диапазона 1–65535
     /// либо после расшифровки логин/пароль пустые.
@@ -69,9 +94,17 @@ internal sealed class Database : IAsyncDisposable, IDisposable
         string databaseName,
         SslMode sslMode,
         string encryptedUser,
-        string encryptedPassword)
+        string encryptedPassword,
+        KeyStore keyStore,
+        CryptoEngine cryptoEngine)
     {
         const string method = nameof(Database);
+
+        ArgumentNullException.ThrowIfNull(keyStore);
+        ArgumentNullException.ThrowIfNull(cryptoEngine);
+
+        _keyStore = keyStore;
+        _cryptoEngine = cryptoEngine;
 
         if (string.IsNullOrWhiteSpace(host))
             throw new ArgumentException("Хост базы данных не может быть пустым.", nameof(host));
@@ -94,12 +127,12 @@ internal sealed class Database : IAsyncDisposable, IDisposable
         SslMode = sslMode;
 
         // Мастер-ключ запрашивается один раз: обе расшифровки идут из одного ключа
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
+        byte[]? masterKey = _keyStore.EnsureMasterKey();
         if (masterKey is null)
             throw new InvalidOperationException("Мастер-ключ недоступен для расшифровки учётных данных БД.");
 
-        string plainUser = EncryptionService.Decrypt(encryptedUser.Trim(), masterKey);
-        string plainPass = EncryptionService.Decrypt(encryptedPassword.Trim(), masterKey);
+        string plainUser = _cryptoEngine.Decrypt(encryptedUser.Trim(), masterKey);
+        string plainPass = _cryptoEngine.Decrypt(encryptedPassword.Trim(), masterKey);
 
         if (string.IsNullOrWhiteSpace(plainUser) || string.IsNullOrWhiteSpace(plainPass))
         {

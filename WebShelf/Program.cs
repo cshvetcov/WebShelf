@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.DataProtection;
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using Serilog.Events;
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DC;
 using WebShelf.Classes.Security;
 using WebShelf.Classes.Service;
@@ -40,10 +41,18 @@ catch
 Log.Logger = ApplySerilogDefaults(new LoggerConfiguration())
     .CreateLogger();
 
+// Криптографические сервисы (шаг 8 декомпозиции, улучшение У3): KeyStore и
+// CryptoEngine переведены со статического фасада на инстансную модель. Создаются
+// вручную до сборки хоста — Data и инициализаторы секций используют их при чтении
+// Server.conf, когда DI-контейнер ещё не существует. Готовые экземпляры ниже
+// регистрируются в DI как singleton'ы (AddSingleton(instance)).
+KeyStore keyStore = new();
+CryptoEngine cryptoEngine = new();
+
 // Единственный экземпляр хранилища системных данных. Создаётся до сборки хоста:
 // схема, порт и домен из Server.conf нужны при конфигурации хоста (UseUrls, cookie).
 // Этот же экземпляр ниже регистрируется в DI как singleton.
-Data data = new();
+Data data = new(keyStore, cryptoEngine);
 
 try
 {
@@ -68,7 +77,7 @@ try
     }
 
     // InstanceId ДО MasterKey и конфигурации
-    string? instanceId = EncryptionService.EnsureInstanceId();
+    string? instanceId = keyStore.EnsureInstanceId();
     if (string.IsNullOrWhiteSpace(instanceId))
     {
         Log.Fatal(
@@ -265,6 +274,12 @@ try
 
     // Хранилище системных данных (конфигурация уже загружена выше) — singleton в DI
     builder.Services.AddSingleton(data);
+
+    // Криптографические сервисы — готовые singleton-экземпляры, созданные выше
+    // до Data: инициализаторы секций использовали их при чтении конфигурации,
+    // потребители из DI получают те же экземпляры (шаг 8 декомпозиции, У3)
+    builder.Services.AddSingleton(keyStore);
+    builder.Services.AddSingleton(cryptoEngine);
 
     builder.Services.AddSingleton<LoginGuard>();
 

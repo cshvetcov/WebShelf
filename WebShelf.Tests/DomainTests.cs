@@ -1,3 +1,4 @@
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DC;
 using WebShelf.Classes.Service;
 using Xunit;
@@ -6,14 +7,17 @@ namespace WebShelf.Tests;
 
 /// <summary>
 /// Тесты класса Domain: валидация аргументов конструктора, построение LDAP-пути
-/// (полный конструктор — только Windows). Тесты формирования списка групп
-/// безопасности из шаблонов имён и обеспечения их существования перенесены
-/// в AdGroupManagerTests (шаг 7 декомпозиции).
+/// (полный конструктор). Тесты формирования списка групп безопасности из шаблонов
+/// имён и обеспечения их существования перенесены в AdGroupManagerTests
+/// (шаг 7 декомпозиции). Шаг 8 декомпозиции (улучшение У3): криптография
+/// поступает через конструктор инстансными зависимостями — полный конструктор
+/// тестируется с подменой хранилища ключей (<see cref="CryptoTestFakes.FakeKeyStore"/>)
+/// и реальным движком на любой ОС, без обращения к реестру и DPAPI.
 /// </summary>
 /// <remarks>
-/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>:
-/// тесты используют реестровый мастер-ключ, с которым работают тесты KeyStoreTests
-/// (временная подмена значения реестра исключает параллельное выполнение).
+/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>
+/// (сохранена сериализация с реестровыми тестами KeyStoreTests; собственно
+/// реестр тесты этого класса после шага 8 не используют).
 /// </remarks>
 [Collection(KeyStoreTests.MasterKeyRegistryCollection)]
 public class DomainTests
@@ -30,7 +34,7 @@ public class DomainTests
     public void Constructor_EmptyDomain_ThrowsArgumentException(string? domain)
     {
         Assert.Throws<ArgumentException>(() =>
-            new Domain(domain!, "abcdef012345", "encryptedUser", "encryptedPassword"));
+            new Domain(domain!, "abcdef012345", "encryptedUser", "encryptedPassword", new CryptoTestFakes.FakeKeyStore(), new CryptoEngine()));
     }
 
     /// <summary>
@@ -43,7 +47,7 @@ public class DomainTests
     public void Constructor_EmptyInstanceIdShort_ThrowsArgumentException(string? instanceIdShort)
     {
         Assert.Throws<ArgumentException>(() =>
-            new Domain("company.local", instanceIdShort!, "encryptedUser", "encryptedPassword"));
+            new Domain("company.local", instanceIdShort!, "encryptedUser", "encryptedPassword", new CryptoTestFakes.FakeKeyStore(), new CryptoEngine()));
     }
 
     /// <summary>
@@ -60,30 +64,52 @@ public class DomainTests
         string? encryptedUser, string? encryptedPassword)
     {
         Assert.Throws<ArgumentException>(() =>
-            new Domain("company.local", "abcdef012345", encryptedUser!, encryptedPassword!));
+            new Domain("company.local", "abcdef012345", encryptedUser!, encryptedPassword!, new CryptoTestFakes.FakeKeyStore(), new CryptoEngine()));
+    }
+
+    /// <summary>
+    /// Конструктор отклоняет null-хранилище ключей (новая публичная граница
+    /// шага 8: криптографические зависимости обязательны).
+    /// </summary>
+    [Fact]
+    public void Constructor_NullKeyStore_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new Domain("company.local", "abcdef012345", "encryptedUser", "encryptedPassword", null!, new CryptoEngine()));
+    }
+
+    /// <summary>
+    /// Конструктор отклоняет null-движок шифрования (новая публичная граница
+    /// шага 8: криптографические зависимости обязательны).
+    /// </summary>
+    [Fact]
+    public void Constructor_NullCryptoEngine_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() =>
+            new Domain("company.local", "abcdef012345", "encryptedUser", "encryptedPassword", new CryptoTestFakes.FakeKeyStore(), null!));
     }
 
     #endregion
 
-    #region Полный конструктор (только Windows: реестр + DPAPI)
+    #region Полный конструктор (фейковое хранилище ключей + реальный движок)
 
     /// <summary>
     /// Полный конструктор расшифровывает учётные данные, нормализует логин
-    /// и строит LDAP-путь корня домена. Выполняется только на Windows.
+    /// и строит LDAP-путь корня домена. Мастер-ключ поступает из подмены
+    /// хранилища (улучшение У3 шага 8) — реестр и DPAPI не затрагиваются,
+    /// тест выполняется на любой ОС (ранее — только Windows).
     /// </summary>
     [Fact]
-    public void Constructor_OnWindows_ValidCredentials_BuildsDomain()
+    public void Constructor_WithFakeKeyStore_ValidCredentials_BuildsDomain()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
+        KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
+        CryptoEngine cryptoEngine = new CryptoEngine();
+        byte[] key = keyStore.EnsureMasterKey()!;
 
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
+        string encryptedUser = cryptoEngine.Encrypt("svc_webshelf", key);
+        string encryptedPassword = cryptoEngine.Encrypt("TestPassword123!", key);
 
-        string encryptedUser = EncryptionService.Encrypt("svc_webshelf", key);
-        string encryptedPassword = EncryptionService.Encrypt("TestPassword123!", key);
-
-        Domain domain = new Domain("company.local", "abcdef012345", encryptedUser, encryptedPassword);
+        Domain domain = new Domain("company.local", "abcdef012345", encryptedUser, encryptedPassword, keyStore, cryptoEngine);
 
         Assert.Equal("company.local", domain.Name);
         Assert.Equal("LDAP://company.local/DC=company,DC=local", domain.Path);
@@ -93,21 +119,17 @@ public class DomainTests
 
     /// <summary>
     /// Конструктор отклоняет учётные данные, не поддающиеся расшифровке.
-    /// Выполняется только на Windows.
+    /// Мастер-ключ поступает из подмены хранилища — реестр и DPAPI
+    /// не затрагиваются, тест выполняется на любой ОС (ранее — только Windows).
     /// </summary>
     [Fact]
-    public void Constructor_OnWindows_InvalidEncryptedData_ThrowsInvalidOperationException()
+    public void Constructor_InvalidEncryptedData_ThrowsInvalidOperationException()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
-
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-
         // Корректная Base64, но данные не зашифрованы сервисом — MAC не сойдётся
         string garbageUser = Convert.ToBase64String(new byte[65]);
 
         Assert.Throws<InvalidOperationException>(() =>
-            new Domain("company.local", "abcdef012345", garbageUser, garbageUser));
+            new Domain("company.local", "abcdef012345", garbageUser, garbageUser, new CryptoTestFakes.FakeKeyStore(), new CryptoEngine()));
     }
 
     #endregion

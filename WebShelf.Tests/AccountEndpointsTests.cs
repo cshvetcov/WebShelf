@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Primitives;
 using System.Globalization;
 using System.Net;
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DC;
 using WebShelf.Classes.Security;
 using WebShelf.Classes.Service;
@@ -23,12 +24,14 @@ namespace WebShelf.Tests;
 /// Сценарий успешного входа (состав клеймов, сроки cookie «Запомнить меня»)
 /// требует живого AD — ValidateAdCredentials нельзя подменить без изменения
 /// производственного кода — и проверяется ручной смоук-проверкой на Windows.
+/// Шаг 8 декомпозиции (улучшение У3): конструктор Domain получает криптографию
+/// инстансными зависимостями — сценарий сбоя AD тестируется с подменой
+/// хранилища ключей на любой ОС (ранее — только Windows).
 /// </summary>
 /// <remarks>
-/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>:
-/// тест успешного входа использует реестровый мастер-ключ, с которым работают
-/// тесты KeyStoreTests (временная подмена значения реестра исключает
-/// параллельное выполнение).
+/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>
+/// (сохранена сериализация с реестровыми тестами KeyStoreTests; собственно
+/// реестр тесты этого класса после шага 8 не используют).
 /// </remarks>
 [Collection(KeyStoreTests.MasterKeyRegistryCollection)]
 public class AccountEndpointsTests : IDisposable
@@ -171,7 +174,7 @@ public class AccountEndpointsTests : IDisposable
     {
         _antiforgery.ThrowValidationException = true;
         DefaultHttpContext context = CreateLoginContext();
-        Data data = new();
+        Data data = DataConfigTestHelpers.CreateData();
 
         IResult result = await AccountEndpoints.LoginAsync(context, _antiforgery, _guard, _roleResolver, data);
         (int statusCode, string location) = await ExecuteAsync(result, context);
@@ -197,7 +200,7 @@ public class AccountEndpointsTests : IDisposable
         Assert.True(lockoutSeconds > 0, "Предусловие: блокировка должна быть активна.");
 
         DefaultHttpContext context = CreateLoginContext();
-        Data data = new();
+        Data data = DataConfigTestHelpers.CreateData();
 
         IResult result = await AccountEndpoints.LoginAsync(context, _antiforgery, _guard, _roleResolver, data);
         (int statusCode, string location) = await ExecuteAsync(result, context);
@@ -218,7 +221,7 @@ public class AccountEndpointsTests : IDisposable
     public async Task LoginAsync_DomainMissing_RedirectsToEntryInvalid()
     {
         DefaultHttpContext context = CreateLoginContext(username: "ivanov", password: "UserPassword123!");
-        Data data = new();
+        Data data = DataConfigTestHelpers.CreateData();
 
         IResult result = await AccountEndpoints.LoginAsync(context, _antiforgery, _guard, _roleResolver, data);
         (int statusCode, string location) = await ExecuteAsync(result, context);
@@ -234,7 +237,7 @@ public class AccountEndpointsTests : IDisposable
     public async Task LoginAsync_EmptyUsername_RedirectsToEntryInvalid()
     {
         DefaultHttpContext context = CreateLoginContext(username: "", password: "UserPassword123!");
-        Data data = new();
+        Data data = DataConfigTestHelpers.CreateData();
 
         IResult result = await AccountEndpoints.LoginAsync(context, _antiforgery, _guard, _roleResolver, data);
         (int statusCode, string location) = await ExecuteAsync(result, context);
@@ -250,7 +253,7 @@ public class AccountEndpointsTests : IDisposable
     public async Task LoginAsync_MissingPassword_RedirectsToEntryInvalid()
     {
         DefaultHttpContext context = CreateLoginContext(username: "ivanov", password: null);
-        Data data = new();
+        Data data = DataConfigTestHelpers.CreateData();
 
         IResult result = await AccountEndpoints.LoginAsync(context, _antiforgery, _guard, _roleResolver, data);
         (int statusCode, string location) = await ExecuteAsync(result, context);
@@ -274,7 +277,7 @@ public class AccountEndpointsTests : IDisposable
         }
 
         DefaultHttpContext context = CreateLoginContext();
-        Data data = new();
+        Data data = DataConfigTestHelpers.CreateData();
 
         IResult result = await AccountEndpoints.LoginAsync(context, _antiforgery, _guard, _roleResolver, data);
         (int statusCode, string location) = await ExecuteAsync(result, context);
@@ -292,7 +295,7 @@ public class AccountEndpointsTests : IDisposable
     {
         _antiforgery.ThrowUnexpectedException = true;
         DefaultHttpContext context = CreateLoginContext();
-        Data data = new();
+        Data data = DataConfigTestHelpers.CreateData();
 
         IResult result = await AccountEndpoints.LoginAsync(context, _antiforgery, _guard, _roleResolver, data);
         (int statusCode, string location) = await ExecuteAsync(result, context);
@@ -306,23 +309,25 @@ public class AccountEndpointsTests : IDisposable
     /// завершается исключением, обработчик возвращает error=server.
     /// Домен создаётся через тестовую точку Data.CreateWithDomain с именем
     /// в зоне .invalid (RFC 6761 — гарантированно не существует, контроллер
-    /// домена недоступен без таймаутов). Выполняется только на Windows:
-    /// конструктор Domain требует мастер-ключ (HKCU + DPAPI).
+    /// домена недоступен без таймаутов). Шаг 8 декомпозиции (улучшение У3):
+    /// мастер-ключ поступает из подмены хранилища — реестр и DPAPI
+    /// не затрагиваются, тест выполняется на любой ОС (на Windows —
+    /// исключение подключения к несуществующему домену, на остальных —
+    /// PlatformNotSupportedException от PrincipalContext; обе ветки попадают
+    /// в общий обработчик).
     /// </summary>
     [Fact]
     public async Task LoginAsync_AdUnavailable_RedirectsToEntryServer()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
+        KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
+        CryptoEngine cryptoEngine = new CryptoEngine();
+        byte[] key = keyStore.EnsureMasterKey()!;
 
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
+        string encryptedUser = cryptoEngine.Encrypt("svc_webshelf", key);
+        string encryptedPassword = cryptoEngine.Encrypt("TestPassword123!", key);
 
-        string encryptedUser = EncryptionService.Encrypt("svc_webshelf", key);
-        string encryptedPassword = EncryptionService.Encrypt("TestPassword123!", key);
-
-        Domain domain = new Domain("ws.invalid", "000000000000", encryptedUser, encryptedPassword);
-        Data data = Data.CreateWithDomain(domain);
+        Domain domain = new Domain("ws.invalid", "000000000000", encryptedUser, encryptedPassword, keyStore, cryptoEngine);
+        Data data = Data.CreateWithDomain(domain, keyStore, cryptoEngine);
 
         DefaultHttpContext context = CreateLoginContext(username: "ivanov", password: "WrongPassword123!");
 

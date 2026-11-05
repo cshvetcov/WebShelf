@@ -1,3 +1,4 @@
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.Service;
 using Xunit;
 
@@ -11,15 +12,19 @@ namespace WebShelf.Tests;
 /// перезаписи файла при чистых защищённых значениях и симметричную
 /// очистку остаточных открытых значений (У1 закрыт в шаге 6:
 /// доменная пара ведёт себя как пары БД и TLS).
-/// Сценарии требуют реального мастер-ключа (HKCU + DPAPI), поэтому
-/// выполняются только на Windows и автоматически пропускаются на других
-/// платформах. Домен и БД недоступны в тестовом окружении — миграция
-/// происходит до проверок их доступности, что и проверяется тестами.
+/// Шаг 8 декомпозиции (улучшение У3): мастер-ключ поступает из подмены
+/// хранилища (<see cref="CryptoTestFakes.FakeKeyStore"/>), шифрование
+/// и расшифровка — реальным <see cref="CryptoEngine"/>; реестр и DPAPI
+/// не затрагиваются, поэтому тесты выполняются на любой платформе
+/// (ранее — только Windows). Домен и БД недоступны в тестовом окружении —
+/// миграция происходит до проверок их доступности, что и проверяется
+/// тестами; реальные сценарии хранилища остаются в KeyStoreTests
+/// (Windows-прогон).
 /// </summary>
 /// <remarks>
-/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>:
-/// тесты используют реестровый мастер-ключ, с которым работают тесты KeyStoreTests
-/// (временная подмена значения реестра исключает параллельное выполнение).
+/// Класс входит в непараллельную коллекцию <see cref="KeyStoreTests.MasterKeyRegistryCollection"/>
+/// (сохранена сериализация с реестровыми тестами KeyStoreTests; собственно
+/// реестр тесты этого класса после шага 8 не используют).
 /// </remarks>
 [Collection(KeyStoreTests.MasterKeyRegistryCollection)]
 public class DataConfigMigrationTests
@@ -32,6 +37,20 @@ public class DataConfigMigrationTests
     private const string UnreachableDomain = "webshelf-test.invalid";
 
     /// <summary>
+    /// Создаёт пару «хранилище + движок» для теста: подмена хранилища
+    /// возвращает синтетический мастер-ключ, движок — реальный.
+    /// </summary>
+    /// <returns>Кортеж: хранилище ключей, движок, синтетический мастер-ключ.</returns>
+    private static (KeyStore KeyStore, CryptoEngine CryptoEngine, byte[] Key) CreateCrypto()
+    {
+        KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
+        CryptoEngine cryptoEngine = new CryptoEngine();
+        byte[] key = keyStore.EnsureMasterKey()!;
+
+        return (keyStore, cryptoEngine, key);
+    }
+
+    /// <summary>
     /// Открытые учётные данные домена при чтении конфигурации
     /// шифруются, записываются в sdomainuser/sdomainpass, открытые
     /// значения затираются. Миграция выполняется до проверки
@@ -41,10 +60,7 @@ public class DataConfigMigrationTests
     [Fact]
     public async Task ReadConfigAsync_PlainDomainCredentials_MigratedAndWiped()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
+        (KeyStore keyStore, CryptoEngine cryptoEngine, byte[] key) = CreateCrypto();
 
         string directory = DataConfigTestHelpers.CreateTempDirectory();
         try
@@ -57,7 +73,7 @@ public class DataConfigMigrationTests
                 "scheme=http",
                 "port=38080");
 
-            Data data = new Data(path);
+            Data data = new Data(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();
@@ -83,8 +99,8 @@ public class DataConfigMigrationTests
 
             Assert.False(string.IsNullOrWhiteSpace(secureUser));
             Assert.False(string.IsNullOrWhiteSpace(securePass));
-            Assert.Equal("svc-account", EncryptionService.Decrypt(secureUser!, key));
-            Assert.Equal("svc-secret", EncryptionService.Decrypt(securePass!, key));
+            Assert.Equal("svc-account", cryptoEngine.Decrypt(secureUser!, key));
+            Assert.Equal("svc-secret", cryptoEngine.Decrypt(securePass!, key));
         }
         finally
         {
@@ -100,10 +116,7 @@ public class DataConfigMigrationTests
     [Fact]
     public async Task ReadConfigAsync_SecureCredentialsOnly_FileNotRewritten()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
+        (KeyStore keyStore, CryptoEngine cryptoEngine, byte[] key) = CreateCrypto();
 
         string directory = DataConfigTestHelpers.CreateTempDirectory();
         try
@@ -111,14 +124,14 @@ public class DataConfigMigrationTests
             string path = Path.Combine(directory, "Server.conf");
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",
-                $"sdomainuser={EncryptionService.Encrypt("svc-account", key)}",
-                $"sdomainpass={EncryptionService.Encrypt("svc-secret", key)}",
+                $"sdomainuser={cryptoEngine.Encrypt("svc-account", key)}",
+                $"sdomainpass={cryptoEngine.Encrypt("svc-secret", key)}",
                 "scheme=http",
                 "port=38080");
 
             byte[] before = File.ReadAllBytes(path);
 
-            Data data = new Data(path);
+            Data data = new Data(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();
@@ -145,17 +158,14 @@ public class DataConfigMigrationTests
     [Fact]
     public async Task ReadConfigAsync_SecureDomainCredentials_PlainLeftovers_Wiped()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
+        (KeyStore keyStore, CryptoEngine cryptoEngine, byte[] key) = CreateCrypto();
 
         string directory = DataConfigTestHelpers.CreateTempDirectory();
         try
         {
             string path = Path.Combine(directory, "Server.conf");
-            string encryptedUser = EncryptionService.Encrypt("svc-account", key);
-            string encryptedPass = EncryptionService.Encrypt("svc-secret", key);
+            string encryptedUser = cryptoEngine.Encrypt("svc-account", key);
+            string encryptedPass = cryptoEngine.Encrypt("svc-secret", key);
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",
                 "sdomainuser=" + encryptedUser,
@@ -165,7 +175,7 @@ public class DataConfigMigrationTests
                 "scheme=http",
                 "port=38080");
 
-            Data data = new Data(path);
+            Data data = new Data(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();
@@ -199,17 +209,14 @@ public class DataConfigMigrationTests
     [Fact]
     public async Task ReadConfigAsync_AfterLeftoverWipe_SecondReadDoesNotRewriteFile()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
+        (KeyStore keyStore, CryptoEngine cryptoEngine, byte[] key) = CreateCrypto();
 
         string directory = DataConfigTestHelpers.CreateTempDirectory();
         try
         {
             string path = Path.Combine(directory, "Server.conf");
-            string encryptedUser = EncryptionService.Encrypt("svc-account", key);
-            string encryptedPass = EncryptionService.Encrypt("svc-secret", key);
+            string encryptedUser = cryptoEngine.Encrypt("svc-account", key);
+            string encryptedPass = cryptoEngine.Encrypt("svc-secret", key);
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",
                 "sdomainuser=" + encryptedUser,
@@ -219,7 +226,7 @@ public class DataConfigMigrationTests
                 "scheme=http",
                 "port=38080");
 
-            Data data = new Data(path);
+            Data data = new Data(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool firstResult = await data.ReadConfigAsync();
@@ -249,17 +256,14 @@ public class DataConfigMigrationTests
     [Fact]
     public async Task ReadConfigAsync_SecureDbCredentials_PlainLeftovers_Wiped()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
+        (KeyStore keyStore, CryptoEngine cryptoEngine, byte[] key) = CreateCrypto();
 
         string directory = DataConfigTestHelpers.CreateTempDirectory();
         try
         {
             string path = Path.Combine(directory, "Server.conf");
-            string encryptedDbUser = EncryptionService.Encrypt("svc-db", key);
-            string encryptedDbPass = EncryptionService.Encrypt("db-secret", key);
+            string encryptedDbUser = cryptoEngine.Encrypt("svc-db", key);
+            string encryptedDbPass = cryptoEngine.Encrypt("db-secret", key);
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",
                 "sdbuser=" + encryptedDbUser,
@@ -272,7 +276,7 @@ public class DataConfigMigrationTests
                 "scheme=http",
                 "port=38080");
 
-            Data data = new Data(path);
+            Data data = new Data(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();
@@ -307,10 +311,7 @@ public class DataConfigMigrationTests
     [Fact]
     public async Task ReadConfigAsync_SecureCertPass_PlainLeftover_Wiped()
     {
-        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
-        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
-        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
+        (KeyStore keyStore, CryptoEngine cryptoEngine, byte[] key) = CreateCrypto();
 
         string directory = DataConfigTestHelpers.CreateTempDirectory();
         try
@@ -318,7 +319,7 @@ public class DataConfigMigrationTests
             string path = Path.Combine(directory, "Server.conf");
             string certPath = Path.Combine(directory, "cert.pfx");
             File.WriteAllBytes(certPath, "not-a-real-pfx"u8.ToArray());
-            string encryptedCertPass = EncryptionService.Encrypt("cert-secret", key);
+            string encryptedCertPass = cryptoEngine.Encrypt("cert-secret", key);
 
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",
@@ -328,7 +329,7 @@ public class DataConfigMigrationTests
                 "scheme=https",
                 "port=38080");
 
-            Data data = new Data(path);
+            Data data = new Data(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();

@@ -12,11 +12,16 @@ namespace WebShelf.Tests;
 /// целостности, эталонная константа совместимости формата, валидация ключей.
 /// Все тесты используют явно переданный мастер-ключ — реестр и DPAPI
 /// не затрагиваются, поэтому выполняются на любой ОС.
-/// Тесты перенесены из <see cref="EncryptionServiceTests"/> без изменения
-/// кейсов; тесты, добавленные шагом 4, помечены в сводках методов.
+/// Тесты перенесены из удалённого фасадного файла EncryptionServiceTests
+/// (шаги 3–4 декомпозиции) без изменения кейсов; тесты, добавленные шагом 4,
+/// помечены в сводках методов. Шаг 8 декомпозиции: CryptoEngine инстансный —
+/// вызовы переведены на поле экземпляра.
 /// </summary>
 public class CryptoEngineTests
 {
+    /// <summary>Экземпляр движка под тестом (шаг 8: CryptoEngine инстансный).</summary>
+    private readonly CryptoEngine _engine = new();
+
     /// <summary>Размер валидного мастер-ключа в байтах.</summary>
     private const int MasterKeySizeBytes = 32;
 
@@ -86,8 +91,8 @@ public class CryptoEngineTests
         byte[] data = new byte[size];
         RandomNumberGenerator.Fill(data);
 
-        byte[] encrypted = CryptoEngine.Encrypt(data, key);
-        byte[] decrypted = CryptoEngine.Decrypt(encrypted, key);
+        byte[] encrypted = _engine.Encrypt(data, key);
+        byte[] decrypted = _engine.Decrypt(encrypted, key);
 
         Assert.Equal(data, decrypted);
     }
@@ -101,8 +106,8 @@ public class CryptoEngineTests
         byte[] key = CreateTestKey();
         string plainText = "Привет, мир! Тест WebShelf: шифрование секретов.";
 
-        string encrypted = CryptoEngine.Encrypt(plainText, key);
-        string decrypted = CryptoEngine.Decrypt(encrypted, key);
+        string encrypted = _engine.Encrypt(plainText, key);
+        string decrypted = _engine.Decrypt(encrypted, key);
 
         Assert.Equal(plainText, decrypted);
     }
@@ -117,8 +122,8 @@ public class CryptoEngineTests
         byte[] key = CreateTestKey();
         byte[] data = "повторяющиеся данные"u8.ToArray();
 
-        byte[] first = CryptoEngine.Encrypt(data, key);
-        byte[] second = CryptoEngine.Encrypt(data, key);
+        byte[] first = _engine.Encrypt(data, key);
+        byte[] second = _engine.Encrypt(data, key);
 
         Assert.False(CryptographicOperations.FixedTimeEquals(first, second));
     }
@@ -132,7 +137,7 @@ public class CryptoEngineTests
         byte[] key = CreateTestKey();
         byte[] data = new byte[10];
 
-        byte[] encrypted = CryptoEngine.Encrypt(data, key);
+        byte[] encrypted = _engine.Encrypt(data, key);
 
         // 10 байт данных дополняются PKCS7 до блока 16 байт
         int expectedLength = 1 + 16 + 16 + 32;
@@ -154,16 +159,16 @@ public class CryptoEngineTests
 
         // Шифрование строки через байтовый ключ и через Base64-ключ:
         // шифртексты различаются (случайный IV), но оба расшифровываются обоими ключами
-        string encryptedByteKey = CryptoEngine.Encrypt(plainText, key);
-        string encryptedBase64Key = CryptoEngine.Encrypt(plainText, base64Key);
+        string encryptedByteKey = _engine.Encrypt(plainText, key);
+        string encryptedBase64Key = _engine.Encrypt(plainText, base64Key);
         Assert.NotEqual(encryptedByteKey, encryptedBase64Key);
-        Assert.Equal(plainText, CryptoEngine.Decrypt(encryptedBase64Key, key));
-        Assert.Equal(plainText, CryptoEngine.Decrypt(encryptedByteKey, base64Key));
+        Assert.Equal(plainText, _engine.Decrypt(encryptedBase64Key, key));
+        Assert.Equal(plainText, _engine.Decrypt(encryptedByteKey, base64Key));
 
         // Расшифровка байтового результата через Base64-ключ
         byte[] data = "байтовые данные"u8.ToArray();
-        byte[] encryptedBytes = CryptoEngine.Encrypt(data, key);
-        byte[] decryptedViaBase64 = CryptoEngine.Decrypt(encryptedBytes, base64Key);
+        byte[] encryptedBytes = _engine.Encrypt(data, key);
+        byte[] decryptedViaBase64 = _engine.Decrypt(encryptedBytes, base64Key);
         Assert.Equal(data, decryptedViaBase64);
     }
 
@@ -182,22 +187,22 @@ public class CryptoEngineTests
         string plainText = "Строка всех перегрузок";
 
         // Encrypt: byte[]+byte[] (1), byte[]+string (2), string+byte[] (3), string+string (4)
-        byte[] encryptedBytesKey = CryptoEngine.Encrypt(data, key);
-        byte[] encryptedBytesBase64Key = CryptoEngine.Encrypt(data, base64Key);
-        string encryptedTextKey = CryptoEngine.Encrypt(plainText, key);
-        string encryptedTextBase64Key = CryptoEngine.Encrypt(plainText, base64Key);
+        byte[] encryptedBytesKey = _engine.Encrypt(data, key);
+        byte[] encryptedBytesBase64Key = _engine.Encrypt(data, base64Key);
+        string encryptedTextKey = _engine.Encrypt(plainText, key);
+        string encryptedTextBase64Key = _engine.Encrypt(plainText, base64Key);
 
         // Decrypt: byte[]+byte[] (5), byte[]+string (6), string+byte[] (7), string+string (8)
-        Assert.Equal(data, CryptoEngine.Decrypt(encryptedBytesKey, key));
-        Assert.Equal(data, CryptoEngine.Decrypt(encryptedBytesBase64Key, base64Key));
-        Assert.Equal(plainText, CryptoEngine.Decrypt(encryptedTextKey, key));
-        Assert.Equal(plainText, CryptoEngine.Decrypt(encryptedTextBase64Key, base64Key));
+        Assert.Equal(data, _engine.Decrypt(encryptedBytesKey, key));
+        Assert.Equal(data, _engine.Decrypt(encryptedBytesBase64Key, base64Key));
+        Assert.Equal(plainText, _engine.Decrypt(encryptedTextKey, key));
+        Assert.Equal(plainText, _engine.Decrypt(encryptedTextBase64Key, base64Key));
 
         // Перекрёстные комбинации форм ключа: результат одной формы читается другой
-        Assert.Equal(data, CryptoEngine.Decrypt(encryptedBytesKey, base64Key));
-        Assert.Equal(data, CryptoEngine.Decrypt(encryptedBytesBase64Key, key));
-        Assert.Equal(plainText, CryptoEngine.Decrypt(encryptedTextKey, base64Key));
-        Assert.Equal(plainText, CryptoEngine.Decrypt(encryptedTextBase64Key, key));
+        Assert.Equal(data, _engine.Decrypt(encryptedBytesKey, base64Key));
+        Assert.Equal(data, _engine.Decrypt(encryptedBytesBase64Key, key));
+        Assert.Equal(plainText, _engine.Decrypt(encryptedTextKey, base64Key));
+        Assert.Equal(plainText, _engine.Decrypt(encryptedTextBase64Key, key));
     }
 
     #endregion
@@ -222,16 +227,16 @@ public class CryptoEngineTests
         Assert.Equal(1, payload[0]);
 
         // Строковая перегрузка (byte[]-ключ)
-        Assert.Equal(ReferencePlainText, CryptoEngine.Decrypt(ReferenceConstantBase64, key));
+        Assert.Equal(ReferencePlainText, _engine.Decrypt(ReferenceConstantBase64, key));
 
         // Байтовая перегрузка (byte[]-ключ)
-        byte[] plainBytes = CryptoEngine.Decrypt(payload, key);
+        byte[] plainBytes = _engine.Decrypt(payload, key);
         Assert.Equal(ReferencePlainText, Encoding.UTF8.GetString(plainBytes));
 
         // Перегрузки с Base64-ключом читают ту же константу
         string base64Key = Convert.ToBase64String(key);
-        Assert.Equal(ReferencePlainText, CryptoEngine.Decrypt(ReferenceConstantBase64, base64Key));
-        Assert.Equal(ReferencePlainText, Encoding.UTF8.GetString(CryptoEngine.Decrypt(payload, base64Key)));
+        Assert.Equal(ReferencePlainText, _engine.Decrypt(ReferenceConstantBase64, base64Key));
+        Assert.Equal(ReferencePlainText, Encoding.UTF8.GetString(_engine.Decrypt(payload, base64Key)));
     }
 
     #endregion
@@ -247,10 +252,10 @@ public class CryptoEngineTests
     {
         byte[] key = CreateTestKey();
         byte[] otherKey = CreateTestKey();
-        byte[] encrypted = CryptoEngine.Encrypt("данные"u8.ToArray(), key);
+        byte[] encrypted = _engine.Encrypt("данные"u8.ToArray(), key);
 
         Assert.ThrowsAny<CryptographicException>(() =>
-            CryptoEngine.Decrypt(encrypted, otherKey));
+            _engine.Decrypt(encrypted, otherKey));
     }
 
     /// <summary>
@@ -260,11 +265,11 @@ public class CryptoEngineTests
     public void Decrypt_TamperedCiphertext_ThrowsCryptographicException()
     {
         byte[] key = CreateTestKey();
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[64], key);
+        byte[] encrypted = _engine.Encrypt(new byte[64], key);
         encrypted[1 + 16] ^= 0xFF; // первый байт шифртекста
 
         Assert.ThrowsAny<CryptographicException>(() =>
-            CryptoEngine.Decrypt(encrypted, key));
+            _engine.Decrypt(encrypted, key));
     }
 
     /// <summary>
@@ -274,11 +279,11 @@ public class CryptoEngineTests
     public void Decrypt_TamperedMac_ThrowsCryptographicException()
     {
         byte[] key = CreateTestKey();
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[64], key);
+        byte[] encrypted = _engine.Encrypt(new byte[64], key);
         encrypted[^1] ^= 0xFF; // последний байт MAC
 
         Assert.ThrowsAny<CryptographicException>(() =>
-            CryptoEngine.Decrypt(encrypted, key));
+            _engine.Decrypt(encrypted, key));
     }
 
     /// <summary>
@@ -289,11 +294,11 @@ public class CryptoEngineTests
     public void Decrypt_TamperedMacLastByte_ThrowsIntegrityException()
     {
         byte[] key = CreateTestKey();
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[64], key);
+        byte[] encrypted = _engine.Encrypt(new byte[64], key);
         encrypted[^1] ^= 0xFF;
 
         CryptographicException ex = Assert.ThrowsAny<CryptographicException>(() =>
-            CryptoEngine.Decrypt(encrypted, key));
+            _engine.Decrypt(encrypted, key));
 
         Assert.Contains("целостности", ex.Message);
     }
@@ -307,12 +312,12 @@ public class CryptoEngineTests
     public void Decrypt_TamperedCiphertextLastByte_ThrowsIntegrityNotPadding()
     {
         byte[] key = CreateTestKey();
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[64], key);
+        byte[] encrypted = _engine.Encrypt(new byte[64], key);
         int lastCipherTextIndex = encrypted.Length - 32 - 1; // последний байт ciphertext перед MAC
         encrypted[lastCipherTextIndex] ^= 0xFF;
 
         CryptographicException ex = Assert.ThrowsAny<CryptographicException>(() =>
-            CryptoEngine.Decrypt(encrypted, key));
+            _engine.Decrypt(encrypted, key));
 
         // MAC поймал подмену до AES: сообщение о целостности, не о паддинге
         Assert.Contains("целостности", ex.Message);
@@ -328,11 +333,11 @@ public class CryptoEngineTests
     public void Decrypt_TamperedIv_ThrowsIntegrityException()
     {
         byte[] key = CreateTestKey();
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[64], key);
+        byte[] encrypted = _engine.Encrypt(new byte[64], key);
         encrypted[1] ^= 0xFF; // первый байт IV
 
         CryptographicException ex = Assert.ThrowsAny<CryptographicException>(() =>
-            CryptoEngine.Decrypt(encrypted, key));
+            _engine.Decrypt(encrypted, key));
 
         Assert.Contains("целостности", ex.Message);
     }
@@ -344,11 +349,11 @@ public class CryptoEngineTests
     public void Decrypt_TamperedVersion_ThrowsCryptographicException()
     {
         byte[] key = CreateTestKey();
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[64], key);
+        byte[] encrypted = _engine.Encrypt(new byte[64], key);
         encrypted[0] = 0x99; // неизвестная версия
 
         Assert.ThrowsAny<CryptographicException>(() =>
-            CryptoEngine.Decrypt(encrypted, key));
+            _engine.Decrypt(encrypted, key));
     }
 
     /// <summary>
@@ -358,11 +363,11 @@ public class CryptoEngineTests
     public void Decrypt_TruncatedData_ThrowsCryptographicException()
     {
         byte[] key = CreateTestKey();
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[64], key);
+        byte[] encrypted = _engine.Encrypt(new byte[64], key);
         byte[] truncated = encrypted[..40]; // меньше 1+16+16+32 = 65
 
         Assert.ThrowsAny<CryptographicException>(() =>
-            CryptoEngine.Decrypt(truncated, key));
+            _engine.Decrypt(truncated, key));
     }
 
     /// <summary>
@@ -373,12 +378,12 @@ public class CryptoEngineTests
     public void Decrypt_ExtendedData_ThrowsCryptographicException()
     {
         byte[] key = CreateTestKey();
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[64], key);
+        byte[] encrypted = _engine.Encrypt(new byte[64], key);
         byte[] extended = new byte[encrypted.Length + 8];
         Buffer.BlockCopy(encrypted, 0, extended, 0, encrypted.Length);
 
         Assert.ThrowsAny<CryptographicException>(() =>
-            CryptoEngine.Decrypt(extended, key));
+            _engine.Decrypt(extended, key));
     }
 
     #endregion
@@ -394,7 +399,7 @@ public class CryptoEngineTests
         byte[] key = CreateTestKey();
 
         Assert.Throws<ArgumentNullException>(() =>
-            CryptoEngine.Encrypt((byte[])null!, key));
+            _engine.Encrypt((byte[])null!, key));
     }
 
     /// <summary>
@@ -406,7 +411,7 @@ public class CryptoEngineTests
         byte[] data = new byte[10];
 
         Assert.Throws<ArgumentNullException>(() =>
-            CryptoEngine.Encrypt(data, (byte[])null!));
+            _engine.Encrypt(data, (byte[])null!));
     }
 
     /// <summary>
@@ -418,7 +423,7 @@ public class CryptoEngineTests
         byte[] key = CreateTestKey();
 
         Assert.Throws<ArgumentNullException>(() =>
-            CryptoEngine.Decrypt((byte[])null!, key));
+            _engine.Decrypt((byte[])null!, key));
     }
 
     /// <summary>
@@ -435,7 +440,7 @@ public class CryptoEngineTests
         byte[] data = new byte[10];
 
         Assert.Throws<ArgumentException>(() =>
-            CryptoEngine.Encrypt(data, key));
+            _engine.Encrypt(data, key));
     }
 
     /// <summary>
@@ -450,10 +455,10 @@ public class CryptoEngineTests
     public void Decrypt_InvalidKeyLength_ThrowsArgumentException(int keyLength)
     {
         byte[] key = new byte[keyLength];
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[10], CreateTestKey());
+        byte[] encrypted = _engine.Encrypt(new byte[10], CreateTestKey());
 
         Assert.Throws<ArgumentException>(() =>
-            CryptoEngine.Decrypt(encrypted, key));
+            _engine.Decrypt(encrypted, key));
     }
 
     /// <summary>
@@ -465,7 +470,7 @@ public class CryptoEngineTests
         byte[] data = new byte[10];
 
         Assert.Throws<FormatException>(() =>
-            CryptoEngine.Encrypt(data, "это-не-base64!!!"));
+            _engine.Encrypt(data, "это-не-base64!!!"));
     }
 
     /// <summary>
@@ -480,7 +485,7 @@ public class CryptoEngineTests
         byte[] data = new byte[10];
 
         Assert.Throws<ArgumentException>(() =>
-            CryptoEngine.Encrypt(data, base64Key));
+            _engine.Encrypt(data, base64Key));
     }
 
     /// <summary>
@@ -493,7 +498,7 @@ public class CryptoEngineTests
         byte[] data = new byte[10];
 
         Assert.Throws<ArgumentException>(() =>
-            CryptoEngine.Encrypt(data, string.Empty));
+            _engine.Encrypt(data, string.Empty));
     }
 
     /// <summary>
@@ -503,7 +508,7 @@ public class CryptoEngineTests
     public void Encrypt_NullBase64Key_ThrowsArgumentNullException()
     {
         Assert.Throws<ArgumentNullException>(() =>
-            CryptoEngine.Encrypt("текст", (string)null!));
+            _engine.Encrypt("текст", (string)null!));
     }
 
     /// <summary>
@@ -515,7 +520,7 @@ public class CryptoEngineTests
         byte[] key = CreateTestKey();
 
         Assert.Throws<ArgumentNullException>(() =>
-            CryptoEngine.Encrypt((string)null!, key));
+            _engine.Encrypt((string)null!, key));
     }
 
     /// <summary>
@@ -527,7 +532,7 @@ public class CryptoEngineTests
         byte[] key = CreateTestKey();
 
         Assert.Throws<FormatException>(() =>
-            CryptoEngine.Decrypt("некорректные-данные", key));
+            _engine.Decrypt("некорректные-данные", key));
     }
 
     /// <summary>
@@ -536,10 +541,10 @@ public class CryptoEngineTests
     [Fact]
     public void Decrypt_NullKey_ThrowsArgumentNullException()
     {
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[10], CreateTestKey());
+        byte[] encrypted = _engine.Encrypt(new byte[10], CreateTestKey());
 
         Assert.Throws<ArgumentNullException>(() =>
-            CryptoEngine.Decrypt(encrypted, (byte[])null!));
+            _engine.Decrypt(encrypted, (byte[])null!));
     }
 
     /// <summary>
@@ -548,10 +553,10 @@ public class CryptoEngineTests
     [Fact]
     public void Decrypt_NullBase64Key_ThrowsArgumentNullException()
     {
-        byte[] encrypted = CryptoEngine.Encrypt(new byte[10], CreateTestKey());
+        byte[] encrypted = _engine.Encrypt(new byte[10], CreateTestKey());
 
         Assert.Throws<ArgumentNullException>(() =>
-            CryptoEngine.Decrypt(encrypted, (string)null!));
+            _engine.Decrypt(encrypted, (string)null!));
     }
 
     #endregion

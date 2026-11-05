@@ -1,4 +1,6 @@
 using System.Text;
+using WebShelf.Classes.Crypto;
+using WebShelf.Classes.Service;
 
 namespace WebShelf.Tests;
 
@@ -9,6 +11,22 @@ namespace WebShelf.Tests;
 /// </summary>
 internal static class DataConfigTestHelpers
 {
+    /// <summary>
+    /// Создаёт экземпляр <see cref="Data"/> с подменой хранилища ключей
+    /// (<see cref="CryptoTestFakes.FakeKeyStore"/>) и реальным движком
+    /// — тестовая точка шага 8 декомпозиции (улучшение У3): чтение
+    /// конфигурации и инициализация секций не зависят от реестра HKCU
+    /// и DPAPI и выполняются на любой ОС.
+    /// </summary>
+    /// <param name="configFile">
+    /// Полный путь к файлу конфигурации; <see langword="null"/> — путь по умолчанию.
+    /// </param>
+    /// <returns>Новый экземпляр <see cref="Data"/> с фейковым хранилищем ключей.</returns>
+    internal static Data CreateData(string? configFile = null)
+    {
+        return new Data(new CryptoTestFakes.FakeKeyStore(), new CryptoEngine(), configFile);
+    }
+
     /// <summary>
     /// Создаёт уникальный временный каталог для одного теста.
     /// Уникальность пути снимает зависимость от параллелизма xUnit:

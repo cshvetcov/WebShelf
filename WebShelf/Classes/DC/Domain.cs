@@ -1,5 +1,6 @@
 using System.DirectoryServices.AccountManagement;
 using Serilog;
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.Service;
 
 namespace WebShelf.Classes.DC;
@@ -19,6 +20,11 @@ namespace WebShelf.Classes.DC;
 /// Формирование списка необходимых групп безопасности из шаблонов имён
 /// и обеспечение их существования в домене (проверка и создание) выделены
 /// в <see cref="AdGroupManager"/> (шаг 7 дорожной карты декомпозиции).
+/// Шаг 8 дорожной карты (улучшение У3): криптография поступает через
+/// конструктор как инстансные зависимости <see cref="KeyStore"/> и
+/// <see cref="CryptoEngine"/> (в Production — singleton'ы, созданные в
+/// <c>Program.Main</c>) вместо статических вызовов фасада — сигнатура
+/// конструктора изменена, поведение не менялось.
 /// </remarks>
 internal class Domain : IAdGroupSource
 {
@@ -57,6 +63,18 @@ internal class Domain : IAdGroupSource
     private readonly string _instanceIdShort;
 
     /// <summary>
+    /// Хранилище ключей: мастер-ключ для расшифровки учётных данных
+    /// (в Production — singleton из DI, улучшение У3 дорожной карты декомпозиции).
+    /// </summary>
+    private readonly KeyStore _keyStore;
+
+    /// <summary>
+    /// Криптографический движок: расшифровка и шифрование учётных данных
+    /// (в Production — singleton из DI, улучшение У3 дорожной карты декомпозиции).
+    /// </summary>
+    private readonly CryptoEngine _cryptoEngine;
+
+    /// <summary>
     /// Суффикс группы доступа (не роль): членство в WebShelf-{InstanceIdShort}-Users
     /// обязательно для входа в систему. Шаблон группы доступа хранится здесь —
     /// Users не входит в каталог ролевых групп.
@@ -66,7 +84,7 @@ internal class Domain : IAdGroupSource
     /// <summary>
     /// Создаёт экземпляр класса <see cref="Domain"/>.
     /// Параметры <paramref name="encryptedUser"/> и <paramref name="encryptedPassword"/>
-    /// должны быть уже зашифрованы мастер-ключом (<see cref="EncryptionService"/>).
+    /// должны быть уже зашифрованы мастер-ключом (<see cref="CryptoEngine"/>).
     /// Перед проверками значения расшифровываются; в поля сохраняются зашифрованные данные.
     /// Принадлежность пользователя к WebShelf проверяется через членство в AD-группе
     /// <c>WebShelf-{InstanceIdShort}-Users</c>.
@@ -76,6 +94,13 @@ internal class Domain : IAdGroupSource
     /// для имён AD-групп WebShelf-{id}-*. Передаётся явно — класс не зависит от хранилища Data.</param>
     /// <param name="encryptedUser">Зашифрованное имя сервисной учётной записи (Base64).</param>
     /// <param name="encryptedPassword">Зашифрованный пароль сервисной учётной записи (Base64).</param>
+    /// <param name="keyStore">Хранилище ключей — источник мастер-ключа
+    /// (в Production — singleton из DI; улучшение У3 дорожной карты декомпозиции).</param>
+    /// <param name="cryptoEngine">Криптографический движок — расшифровка и шифрование
+    /// учётных данных (в Production — singleton из DI).</param>
+    /// <exception cref="ArgumentNullException">
+    /// Возникает, если <paramref name="keyStore"/> или <paramref name="cryptoEngine"/> равен <see langword="null"/>.
+    /// </exception>
     /// <exception cref="ArgumentException">
     /// Возникает, если имя домена пустое, либо после расшифровки логин/пароль пустые
     /// или логин не удаётся привести к формату username@domain.
@@ -83,9 +108,21 @@ internal class Domain : IAdGroupSource
     /// <exception cref="InvalidOperationException">
     /// Возникает, если мастер-ключ недоступен или расшифровка не удалась.
     /// </exception>
-    internal Domain(string domain, string instanceIdShort, string encryptedUser, string encryptedPassword)
+    internal Domain(
+        string domain,
+        string instanceIdShort,
+        string encryptedUser,
+        string encryptedPassword,
+        KeyStore keyStore,
+        CryptoEngine cryptoEngine)
     {
         const string method = ".ctor";
+
+        ArgumentNullException.ThrowIfNull(keyStore);
+        ArgumentNullException.ThrowIfNull(cryptoEngine);
+
+        _keyStore = keyStore;
+        _cryptoEngine = cryptoEngine;
 
         if (string.IsNullOrWhiteSpace(domain))
             throw new ArgumentException("Имя домена не может быть пустым.", nameof(domain));
@@ -96,7 +133,7 @@ internal class Domain : IAdGroupSource
         if (string.IsNullOrWhiteSpace(encryptedPassword))
             throw new ArgumentException("Зашифрованный пароль не может быть пустым.", nameof(encryptedPassword));
 
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
+        byte[]? masterKey = _keyStore.EnsureMasterKey();
         if (masterKey is null)
         {
             Log.Error(
@@ -110,8 +147,8 @@ internal class Domain : IAdGroupSource
         string plainPassword;
         try
         {
-            plainUser = EncryptionService.Decrypt(encryptedUser.Trim(), masterKey);
-            plainPassword = EncryptionService.Decrypt(encryptedPassword.Trim(), masterKey);
+            plainUser = _cryptoEngine.Decrypt(encryptedUser.Trim(), masterKey);
+            plainPassword = _cryptoEngine.Decrypt(encryptedPassword.Trim(), masterKey);
         }
         catch (Exception ex)
         {
@@ -136,8 +173,8 @@ internal class Domain : IAdGroupSource
         // Перед записью в поля — шифруем (нормализованный логин и пароль)
         try
         {
-            _encryptedUser = EncryptionService.Encrypt(userName.Trim(), masterKey);
-            _encryptedPassword = EncryptionService.Encrypt(plainPassword, masterKey);
+            _encryptedUser = _cryptoEngine.Encrypt(userName.Trim(), masterKey);
+            _encryptedPassword = _cryptoEngine.Encrypt(plainPassword, masterKey);
         }
         catch (Exception ex)
         {
@@ -169,7 +206,7 @@ internal class Domain : IAdGroupSource
     {
         const string method = nameof(GetDecryptedUser);
 
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
+        byte[]? masterKey = _keyStore.EnsureMasterKey();
         if (masterKey is null)
         {
             Log.Error(
@@ -180,7 +217,7 @@ internal class Domain : IAdGroupSource
 
         try
         {
-            return EncryptionService.Decrypt(_encryptedUser, masterKey);
+            return _cryptoEngine.Decrypt(_encryptedUser, masterKey);
         }
         catch (Exception ex)
         {
@@ -200,7 +237,7 @@ internal class Domain : IAdGroupSource
     {
         const string method = nameof(GetDecryptedPassword);
 
-        byte[]? masterKey = EncryptionService.EnsureMasterKey();
+        byte[]? masterKey = _keyStore.EnsureMasterKey();
         if (masterKey is null)
         {
             Log.Error(
@@ -211,7 +248,7 @@ internal class Domain : IAdGroupSource
 
         try
         {
-            return EncryptionService.Decrypt(_encryptedPassword, masterKey);
+            return _cryptoEngine.Decrypt(_encryptedPassword, masterKey);
         }
         catch (Exception ex)
         {

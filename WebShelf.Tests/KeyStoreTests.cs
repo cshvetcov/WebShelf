@@ -15,6 +15,9 @@ namespace WebShelf.Tests;
 /// Тесты, временно подменяющие реестровое значение мастер-ключа, сериализуются
 /// с его потребителями в непараллельной коллекции
 /// <see cref="MasterKeyRegistryCollection"/>.
+/// Шаг 8 декомпозиции: KeyStore — инстансный сервис; каждый тест создаёт
+/// собственный экземпляр (кэш и блокировки — на уровне экземпляра,
+/// реестровое значение по-прежнему общее — сериализация через коллекцию).
 /// </summary>
 [Collection(MasterKeyRegistryCollection)]
 public class KeyStoreTests
@@ -53,7 +56,9 @@ public class KeyStoreTests
     [Fact]
     public void CreateKey_Returns32Bytes()
     {
-        byte[] key = KeyStore.CreateKey();
+        KeyStore keyStore = new();
+
+        byte[] key = keyStore.CreateKey();
 
         Assert.NotNull(key);
         Assert.Equal(MasterKeySizeBytes, key.Length);
@@ -65,8 +70,10 @@ public class KeyStoreTests
     [Fact]
     public void CreateKey_GeneratesDifferentKeys()
     {
-        byte[] first = KeyStore.CreateKey();
-        byte[] second = KeyStore.CreateKey();
+        KeyStore keyStore = new();
+
+        byte[] first = keyStore.CreateKey();
+        byte[] second = keyStore.CreateKey();
 
         Assert.False(CryptographicOperations.FixedTimeEquals(first, second));
     }
@@ -77,7 +84,9 @@ public class KeyStoreTests
     [Fact]
     public void CreateKeyBase64_DecodesTo32Bytes()
     {
-        string base64Key = KeyStore.CreateKeyBase64();
+        KeyStore keyStore = new();
+
+        string base64Key = keyStore.CreateKeyBase64();
 
         byte[] key = Convert.FromBase64String(base64Key);
         Assert.Equal(MasterKeySizeBytes, key.Length);
@@ -94,11 +103,13 @@ public class KeyStoreTests
     [Fact]
     public void EnsureMasterKey_InvalidKeyLength_ReturnsNull()
     {
-        KeyStore.ClearMasterKeyCache();
+        KeyStore keyStore = new();
+
+        keyStore.ClearMasterKeyCache();
 
         byte[] invalidKey = new byte[16];
 
-        Assert.Null(KeyStore.EnsureMasterKey(invalidKey));
+        Assert.Null(keyStore.EnsureMasterKey(invalidKey));
     }
 
     /// <summary>
@@ -108,13 +119,15 @@ public class KeyStoreTests
     [Fact]
     public void ClearMasterKeyCache_RepeatedCalls_NeverThrow()
     {
-        KeyStore.ClearMasterKeyCache();
-        KeyStore.ClearMasterKeyCache();
+        KeyStore keyStore = new();
+
+        keyStore.ClearMasterKeyCache();
+        keyStore.ClearMasterKeyCache();
 
         // Отказ (невалидный ключ) не оставляет кэш в несогласованном состоянии
-        Assert.Null(KeyStore.EnsureMasterKey(new byte[16]));
+        Assert.Null(keyStore.EnsureMasterKey(new byte[16]));
 
-        KeyStore.ClearMasterKeyCache();
+        keyStore.ClearMasterKeyCache();
     }
 
     #endregion
@@ -130,15 +143,17 @@ public class KeyStoreTests
     [Fact]
     public void EnsureMasterKey_PlatformWithoutRegistry_ReturnsNullWithoutThrowing()
     {
+        KeyStore keyStore = new();
+
         Assert.SkipWhen(OperatingSystem.IsWindows(), "На Windows реестр доступен — тест не применим.");
 
-        KeyStore.ClearMasterKeyCache();
+        keyStore.ClearMasterKeyCache();
 
         // Автогенерация: чтение реестра недоступно, запись под DPAPI невозможна
-        Assert.Null(KeyStore.EnsureMasterKey());
+        Assert.Null(keyStore.EnsureMasterKey());
 
         // Готовый ключ: даже при валидном ключе защита DPAPI недоступна
-        Assert.Null(KeyStore.EnsureMasterKey(CreateTestKey()));
+        Assert.Null(keyStore.EnsureMasterKey(CreateTestKey()));
     }
 
     #endregion
@@ -153,8 +168,10 @@ public class KeyStoreTests
     [Fact]
     public void EnsureInstanceId_DebugBuild_ReturnsFixed26Zeros()
     {
+        KeyStore keyStore = new();
+
 #if DEBUG
-        string? instanceId = KeyStore.EnsureInstanceId();
+        string? instanceId = keyStore.EnsureInstanceId();
 
         Assert.NotNull(instanceId);
         Assert.Equal(26, instanceId.Length);
@@ -173,15 +190,17 @@ public class KeyStoreTests
     [Fact]
     public void EnsureInstanceId_ReleaseOnWindows_Idempotent_TwoCallsMatch()
     {
+        KeyStore keyStore = new();
+
 #if DEBUG
         Assert.Skip("В Debug-сборке реестр не используется — идемпотентность хранения проверяется только в Release.");
 #else
         Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: InstanceId хранится в HKCU под защитой DPAPI.");
 
-        string? first = KeyStore.EnsureInstanceId();
+        string? first = keyStore.EnsureInstanceId();
         Assert.NotNull(first);
 
-        string? second = KeyStore.EnsureInstanceId();
+        string? second = keyStore.EnsureInstanceId();
         Assert.NotNull(second);
         Assert.Equal(first, second);
 #endif
@@ -200,18 +219,20 @@ public class KeyStoreTests
     [Fact]
     public void EnsureMasterKey_OnWindows_ReturnsStableKey()
     {
+        KeyStore keyStore = new();
+
         Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
 
-        byte[]? first = KeyStore.EnsureMasterKey();
+        byte[]? first = keyStore.EnsureMasterKey();
         Assert.NotNull(first);
         Assert.Equal(MasterKeySizeBytes, first.Length);
 
-        byte[]? second = KeyStore.EnsureMasterKey();
+        byte[]? second = keyStore.EnsureMasterKey();
         Assert.NotNull(second);
         Assert.True(CryptographicOperations.FixedTimeEquals(first, second));
 
-        KeyStore.ClearMasterKeyCache();
-        byte[]? third = KeyStore.EnsureMasterKey();
+        keyStore.ClearMasterKeyCache();
+        byte[]? third = keyStore.EnsureMasterKey();
         Assert.NotNull(third);
         Assert.True(CryptographicOperations.FixedTimeEquals(first, third));
     }
@@ -226,27 +247,29 @@ public class KeyStoreTests
     [Fact]
     public void EnsureMasterKey_OnWindows_ExplicitKeyMatchAndMismatch()
     {
+        KeyStore keyStore = new();
+
         Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
 
-        byte[]? stored = KeyStore.EnsureMasterKey();
+        byte[]? stored = keyStore.EnsureMasterKey();
         Assert.SkipUnless(stored is not null, "Мастер-ключ недоступен.");
         byte[] key = stored!; // SkipUnless гарантирует ненулевое значение при продолжении
 
         // Совпавший ключ читается из реестра (кэш пуст — ветка чтения из HKCU)
-        KeyStore.ClearMasterKeyCache();
-        byte[]? matched = KeyStore.EnsureMasterKey(key);
+        keyStore.ClearMasterKeyCache();
+        byte[]? matched = keyStore.EnsureMasterKey(key);
         Assert.NotNull(matched);
         Assert.True(CryptographicOperations.FixedTimeEquals(key, matched));
 
         // Несовпадение при пустом кэше — ветка реестра: отказ без изменения значения
-        KeyStore.ClearMasterKeyCache();
-        Assert.Null(KeyStore.EnsureMasterKey(CreateTestKey()));
+        keyStore.ClearMasterKeyCache();
+        Assert.Null(keyStore.EnsureMasterKey(CreateTestKey()));
 
         // Несовпадение при тёплом кэше — ветка кэша: отказ без изменения значения
-        Assert.Null(KeyStore.EnsureMasterKey(CreateTestKey()));
+        Assert.Null(keyStore.EnsureMasterKey(CreateTestKey()));
 
         // Состояние не испорчено: штатное обращение возвращает сохранённый ключ
-        byte[]? stable = KeyStore.EnsureMasterKey();
+        byte[]? stable = keyStore.EnsureMasterKey();
         Assert.NotNull(stable);
         Assert.True(CryptographicOperations.FixedTimeEquals(key, stable));
     }
@@ -261,6 +284,8 @@ public class KeyStoreTests
     [Fact]
     public void EnsureMasterKey_OnWindows_WriteAndReadRoundTrip()
     {
+        KeyStore keyStore = new();
+
         Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
 
         byte[]? backup = ReadRegistryMasterKeyValue();
@@ -270,23 +295,23 @@ public class KeyStoreTests
             {
                 // Изымаем существующее значение: ветка записи достижима только при его отсутствии
                 DeleteRegistryMasterKeyValue();
-                KeyStore.ClearMasterKeyCache();
+                keyStore.ClearMasterKeyCache();
             }
 
             byte[] newKey = CreateTestKey();
-            byte[]? accepted = KeyStore.EnsureMasterKey(newKey);
+            byte[]? accepted = keyStore.EnsureMasterKey(newKey);
             Assert.NotNull(accepted);
             Assert.True(CryptographicOperations.FixedTimeEquals(newKey, accepted));
 
             // Ключ сохранён в реестре: чтение после сброса кэша возвращает тот же ключ
-            KeyStore.ClearMasterKeyCache();
-            byte[]? reread = KeyStore.EnsureMasterKey();
+            keyStore.ClearMasterKeyCache();
+            byte[]? reread = keyStore.EnsureMasterKey();
             Assert.NotNull(reread);
             Assert.True(CryptographicOperations.FixedTimeEquals(newKey, reread));
         }
         finally
         {
-            KeyStore.ClearMasterKeyCache();
+            keyStore.ClearMasterKeyCache();
             RestoreRegistryMasterKeyValue(backup);
         }
     }
@@ -301,6 +326,8 @@ public class KeyStoreTests
     [Fact]
     public void EnsureMasterKey_OnWindows_CorruptedBlob_ReturnsNullAndPreservesValue()
     {
+        KeyStore keyStore = new();
+
         Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
 
         byte[]? backup = ReadRegistryMasterKeyValue();
@@ -309,14 +336,14 @@ public class KeyStoreTests
             byte[] corrupted = new byte[64];
             RandomNumberGenerator.Fill(corrupted);
             WriteRegistryMasterKeyValue(corrupted);
-            KeyStore.ClearMasterKeyCache();
+            keyStore.ClearMasterKeyCache();
 
             // Чтение не справляется с блобом — отказ без исключения наружу
-            Assert.Null(KeyStore.EnsureMasterKey());
+            Assert.Null(keyStore.EnsureMasterKey());
 
             // Явный валидный ключ не спасает: сохранённый блоб читается первым
             // и не расшифровывается — генерация не выполняется
-            Assert.Null(KeyStore.EnsureMasterKey(CreateTestKey()));
+            Assert.Null(keyStore.EnsureMasterKey(CreateTestKey()));
 
             // Повреждённое значение не удалено и не перезаписано
             byte[]? after = ReadRegistryMasterKeyValue();
@@ -325,7 +352,7 @@ public class KeyStoreTests
         }
         finally
         {
-            KeyStore.ClearMasterKeyCache();
+            keyStore.ClearMasterKeyCache();
             RestoreRegistryMasterKeyValue(backup);
         }
     }

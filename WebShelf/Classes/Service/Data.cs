@@ -1,4 +1,5 @@
 using System.Security.Cryptography.X509Certificates;
+using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DC;
 using WebShelf.Classes.DB;
 using WebShelf.Classes.Security;
@@ -30,6 +31,14 @@ namespace WebShelf.Classes.Service;
 /// секций, присваивает готовые экземпляры своим свойствам и агрегирует
 /// признаки успеха; скалярные секции (порт, схема, параметры ролевой модели)
 /// инициализирует самостоятельно.
+/// </para>
+/// <para>
+/// Шаг 8 дорожной карты (улучшение У3): криптографические сервисы
+/// <see cref="KeyStore"/> и <see cref="CryptoEngine"/> поступают через
+/// конструктор как инстансные зависимости (в Production — singleton'ы,
+/// созданные в <c>Program.Main</c> до сборки хоста и зарегистрированные
+/// в DI готовыми экземплярами) и передаются инициализаторам секций;
+/// статический фасад <c>EncryptionService</c> удалён.
 /// </para>
 /// </remarks>
 internal sealed class Data
@@ -71,6 +80,21 @@ internal sealed class Data
     /// на путь <see cref="ConfigFile"/> и передаётся инициализаторам секций.
     /// </summary>
     private SecureCredentialsWriter CredentialsWriter { get; }
+
+    /// <summary>
+    /// Хранилище ключей (в Production — singleton из DI, созданный в
+    /// <c>Program.Main</c> до сборки хоста): источник мастер-ключа для
+    /// инициализаторов секций (улучшение У3 дорожной карты декомпозиции).
+    /// </summary>
+    private readonly KeyStore _keyStore;
+
+    /// <summary>
+    /// Криптографический движок (в Production — singleton из DI):
+    /// шифрование и расшифровка учётных данных при миграции конфигурации,
+    /// передаётся инициализаторам секций (улучшение У3 дорожной карты
+    /// декомпозиции).
+    /// </summary>
+    private readonly CryptoEngine _cryptoEngine;
 
     /// <summary>
     /// Экземпляр домена Active Directory.
@@ -124,6 +148,12 @@ internal sealed class Data
     /// <summary>
     /// Создаёт экземпляр <see cref="Data"/>.
     /// </summary>
+    /// <param name="keyStore">Хранилище ключей — источник мастер-ключа для
+    /// инициализаторов секций (в Production — singleton из DI; улучшение У3
+    /// дорожной карты декомпозиции).</param>
+    /// <param name="cryptoEngine">Криптографический движок — шифрование и
+    /// расшифровка учётных данных при миграции конфигурации (в Production —
+    /// singleton из DI).</param>
     /// <param name="configFile">
     /// Полный путь к файлу конфигурации Server.conf.
     /// <see langword="null"/> или пустая строка — путь по умолчанию:
@@ -133,8 +163,17 @@ internal sealed class Data
     /// каталог приложения. Производственный код путь не передаёт —
     /// поведение по сравнению с прежней инициализацией свойства не меняется.
     /// </param>
-    internal Data(string? configFile = null)
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="keyStore"/> или <paramref name="cryptoEngine"/> равен <see langword="null"/>.
+    /// </exception>
+    internal Data(KeyStore keyStore, CryptoEngine cryptoEngine, string? configFile = null)
     {
+        ArgumentNullException.ThrowIfNull(keyStore);
+        ArgumentNullException.ThrowIfNull(cryptoEngine);
+
+        _keyStore = keyStore;
+        _cryptoEngine = cryptoEngine;
+
         ConfigFile = string.IsNullOrWhiteSpace(configFile)
             ? Path.Combine(AppContext.BaseDirectory, "Server.conf")
             : configFile;
@@ -169,19 +208,24 @@ internal sealed class Data
     /// у которого <see cref="Domain"/> уже установлен, минуя чтение Server.conf
     /// (InstanceId, реестр HKCU, DPAPI и файл конфигурации). Используется
     /// юнит-тестами обработчиков входа/выхода (<c>AccountEndpoints</c>);
-    /// производственный код создаёт <see cref="Data"/> конструктором по
-    /// умолчанию и заполняет домен только через <see cref="ReadConfigAsync"/>.
-    /// Поведение производственных сценариев не меняется.
+    /// производственный код создаёт <see cref="Data"/> конструктором с
+    /// криптографическими зависимостями и заполняет домен только через
+    /// <see cref="ReadConfigAsync"/>. Поведение производственных сценариев не меняется.
     /// </summary>
     /// <param name="domain">Готовый экземпляр домена Active Directory.</param>
+    /// <param name="keyStore">Хранилище ключей — как для конструктора
+    /// (в тестах — фейк из <c>CryptoTestFakes</c>).</param>
+    /// <param name="cryptoEngine">Криптографический движок — как для конструктора.</param>
     /// <returns>Новый экземпляр <see cref="Data"/> с установленным доменом.</returns>
-    internal static Data CreateWithDomain(Domain domain)
+    internal static Data CreateWithDomain(Domain domain, KeyStore keyStore, CryptoEngine cryptoEngine)
     {
         const string method = nameof(CreateWithDomain);
 
         ArgumentNullException.ThrowIfNull(domain);
+        ArgumentNullException.ThrowIfNull(keyStore);
+        ArgumentNullException.ThrowIfNull(cryptoEngine);
 
-        Data data = new();
+        Data data = new(keyStore, cryptoEngine);
         data.Domain = domain;
 
         Log.Debug(
@@ -254,10 +298,10 @@ internal sealed class Data
             // экземпляры, Data присваивает их своим свойствам в прежнем порядке
             // и агрегирует признаки успеха; инициализаторы секций не мутируют
             // состояние Data.
-            Domain = DomainSection.TryInitDomain(config, InstanceIdShort, CredentialsWriter);
+            Domain = DomainSection.TryInitDomain(config, InstanceIdShort, CredentialsWriter, _keyStore, _cryptoEngine);
             bool domainOk = Domain is not null;
 
-            Database = await DatabaseSection.TryInitDatabaseAsync(config, CredentialsWriter).ConfigureAwait(false);
+            Database = await DatabaseSection.TryInitDatabaseAsync(config, CredentialsWriter, _keyStore, _cryptoEngine).ConfigureAwait(false);
             bool databaseOk = Database is not null;
 
             bool portOk = TryInitPort(config);
@@ -268,7 +312,7 @@ internal sealed class Data
 
             // Сертификат инициализируется после схемы: нужен только при https
             bool certificateOk = CertificateSection.TryInitCertificate(
-                config, Scheme, CredentialsWriter, out X509Certificate2? certificate);
+                config, Scheme, CredentialsWriter, _keyStore, _cryptoEngine, out X509Certificate2? certificate);
             TlsCertificate = certificate;
 
             if (!domainOk || !databaseOk || !portOk || !schemeOk || !roleCacheOk || !certificateOk)
