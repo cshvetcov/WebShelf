@@ -1,11 +1,9 @@
-﻿using System.Security.Cryptography.X509Certificates;
-using System.Text;
-using Npgsql;
-using Serilog;
+using System.Security.Cryptography.X509Certificates;
 using WebShelf.Classes.DC;
 using WebShelf.Classes.DB;
 using WebShelf.Classes.Security;
 using WebShelf.Classes.Service.Configuration;
+using WebShelf.Classes.Service.Configuration.Sections;
 
 namespace WebShelf.Classes.Service;
 
@@ -21,9 +19,17 @@ namespace WebShelf.Classes.Service;
 /// из Server.conf нужны при конфигурации хоста (UseUrls, политика cookie) —
 /// и регистрируется в DI как singleton.
 /// <para>
-/// Разбор файла на словарь ключ=значение выполняет <see cref="ServerConfigParser"/>
-/// (вынесен из Data шагом 5 дорожной карты декомпозиции): Data остаётся
-/// оркестратором — получает словарь у парсера и инициализирует секции.
+/// Разбор файла на словарь ключ=значение выполняет <see cref="ServerConfigParser"/>,
+/// запись защищённых учётных данных — <see cref="SecureCredentialsWriter"/>
+/// (вынесены из Data шагами 5 и 6 дорожной карты декомпозиции);
+/// инициализацию секций домена, БД и TLS-сертификата — классы
+/// <see cref="DomainSection"/>, <see cref="DatabaseSection"/>,
+/// <see cref="CertificateSection"/> (шаг 6, точка решения о секциях:
+/// Data после выноса записи остаётся больше ~550 строк). Data остаётся
+/// оркестратором: получает словарь у парсера, передаёт его инициализаторам
+/// секций, присваивает готовые экземпляры своим свойствам и агрегирует
+/// признаки успеха; скалярные секции (порт, схема, параметры ролевой модели)
+/// инициализирует самостоятельно.
 /// </para>
 /// </remarks>
 internal sealed class Data
@@ -47,7 +53,7 @@ internal sealed class Data
     /// По умолчанию — <c>AppContext.BaseDirectory/Server.conf</c>;
     /// может быть переопределён конструктором (тестовая точка, улучшение У2
     /// дорожной карты декомпозиции). Путь передаётся парсеру
-    /// <see cref="ConfigParser"/>.
+    /// <see cref="ConfigParser"/> и писателю <see cref="CredentialsWriter"/>.
     /// </summary>
     private string ConfigFile { get; }
 
@@ -57,6 +63,14 @@ internal sealed class Data
     /// Создаётся один раз на путь <see cref="ConfigFile"/>.
     /// </summary>
     private ServerConfigParser ConfigParser { get; }
+
+    /// <summary>
+    /// Писатель защищённых учётных данных в Server.conf (вынесен из Data
+    /// шагом 6 дорожной карты декомпозиции): управляемая перезапись с
+    /// сохранением комментариев и порядка строк. Создаётся один раз
+    /// на путь <see cref="ConfigFile"/> и передаётся инициализаторам секций.
+    /// </summary>
+    private SecureCredentialsWriter CredentialsWriter { get; }
 
     /// <summary>
     /// Экземпляр домена Active Directory.
@@ -126,6 +140,7 @@ internal sealed class Data
             : configFile;
 
         ConfigParser = new ServerConfigParser(ConfigFile);
+        CredentialsWriter = new SecureCredentialsWriter(ConfigFile);
     }
 
     /// <summary>
@@ -175,12 +190,6 @@ internal sealed class Data
 
         return data;
     }
-
-    /// <summary>
-    /// Обязательные ключи домена в конфигурации. Учётные данные берутся из
-    /// <c>sdomainuser</c>/<c>sdomainpass</c> либо из <c>domainuser</c>/<c>domainpass</c>.
-    /// </summary>
-    private static readonly string[] RequiredDomainKeys = ["domainname"];
 
     /// <summary>
     /// Асинхронно читает файл Server.conf и инициализирует <see cref="Domain"/>,
@@ -240,8 +249,17 @@ internal sealed class Data
                 return false;
             }
 
-            bool domainOk = TryInitDomain(config);
-            bool databaseOk = await TryInitDatabaseAsync(config).ConfigureAwait(false);
+            // Секции домена, БД и TLS-сертификата инициализируются вынесенными
+            // инициализаторами (шаг 6 дорожной карты): они возвращают готовые
+            // экземпляры, Data присваивает их своим свойствам в прежнем порядке
+            // и агрегирует признаки успеха; инициализаторы секций не мутируют
+            // состояние Data.
+            Domain = DomainSection.TryInitDomain(config, InstanceIdShort, CredentialsWriter);
+            bool domainOk = Domain is not null;
+
+            Database = await DatabaseSection.TryInitDatabaseAsync(config, CredentialsWriter).ConfigureAwait(false);
+            bool databaseOk = Database is not null;
+
             bool portOk = TryInitPort(config);
             bool schemeOk = TryInitScheme(config);
 
@@ -249,7 +267,9 @@ internal sealed class Data
             bool roleCacheOk = InitRoleCacheOptions(config);
 
             // Сертификат инициализируется после схемы: нужен только при https
-            bool certificateOk = TryInitCertificate(config);
+            bool certificateOk = CertificateSection.TryInitCertificate(
+                config, Scheme, CredentialsWriter, out X509Certificate2? certificate);
+            TlsCertificate = certificate;
 
             if (!domainOk || !databaseOk || !portOk || !schemeOk || !roleCacheOk || !certificateOk)
             {
@@ -281,576 +301,6 @@ internal sealed class Data
             RoleCacheOptions = null;
             return false;
         }
-    }
-
-    /// <summary>
-    /// Инициализирует <see cref="Domain"/> из словаря конфигурации
-    /// и проверяет доступность контроллера домена через сервисную учётную запись
-    /// (без проверки группы Users).
-    /// <para>
-    /// Если заданы <c>sdomainuser</c> и <c>sdomainpass</c> — используются они
-    /// (значения уже зашифрованы мастер-ключом).
-    /// Если заданы <c>domainuser</c> и <c>domainpass</c> — значения шифруются мастер-ключом,
-    /// записываются в <c>sdomainuser</c>/<c>sdomainpass</c>, открытые поля очищаются.
-    /// </para>
-    /// </summary>
-    private bool TryInitDomain(Dictionary<string, string> config)
-    {
-        const string method = nameof(TryInitDomain);
-
-        try
-        {
-            string[] keys = RequiredDomainKeys;
-
-            if (!keys.All(config.ContainsKey))
-            {
-                IEnumerable<string> missing = keys.Where(k => !config.ContainsKey(k));
-                Log.Error(
-                    "Отсутствуют обязательные ключи домена: {MissingKeys}. Class={Class}, Method={Method}",
-                    string.Join(", ", missing), ClassName, method);
-                return false;
-            }
-
-            string domainName = config["domainname"];
-
-            if (string.IsNullOrWhiteSpace(domainName))
-            {
-                Log.Error(
-                    "Значение domainname пустое. Class={Class}, Method={Method}",
-                    ClassName, method);
-                return false;
-            }
-
-            byte[]? masterKey = EncryptionService.EnsureMasterKey();
-            if (masterKey is null)
-            {
-                Log.Error(
-                    "Мастер-ключ недоступен при инициализации домена. Class={Class}, Method={Method}",
-                    ClassName, method);
-                return false;
-            }
-
-            string encryptedUser;
-            string encryptedPass;
-            string plainUser;
-            string plainPass;
-
-            bool hasSecureUser = config.TryGetValue("sdomainuser", out string? sUser) &&
-                                 !string.IsNullOrWhiteSpace(sUser);
-            bool hasSecurePass = config.TryGetValue("sdomainpass", out string? sPass) &&
-                                 !string.IsNullOrWhiteSpace(sPass);
-
-            if (hasSecureUser && hasSecurePass)
-            {
-                // Уже зашифрованные значения — используем их
-                encryptedUser = sUser!.Trim();
-                encryptedPass = sPass!.Trim();
-
-                try
-                {
-                    plainUser = EncryptionService.Decrypt(encryptedUser, masterKey);
-                    plainPass = EncryptionService.Decrypt(encryptedPass, masterKey);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex,
-                        "Не удалось расшифровать sdomainuser/sdomainpass. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                if (string.IsNullOrWhiteSpace(plainUser) || string.IsNullOrWhiteSpace(plainPass))
-                {
-                    Log.Error(
-                        "После расшифровки sdomainuser/sdomainpass получены пустые значения. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                Log.Information(
-                    "Учётные данные домена загружены из sdomainuser/sdomainpass. Class={Class}, Method={Method}",
-                    ClassName, method);
-            }
-            else
-            {
-                // Открытые domainuser/domainpass — шифруем и сохраняем в sdomain*
-                if (!config.TryGetValue("domainuser", out string? domainUser) ||
-                    !config.TryGetValue("domainpass", out string? domainPass) ||
-                    string.IsNullOrWhiteSpace(domainUser) ||
-                    string.IsNullOrWhiteSpace(domainPass))
-                {
-                    Log.Error(
-                        "Отсутствуют domainuser/domainpass и sdomainuser/sdomainpass. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                plainUser = domainUser.Trim();
-                plainPass = domainPass.Trim();
-
-                try
-                {
-                    encryptedUser = EncryptionService.Encrypt(plainUser, masterKey);
-                    encryptedPass = EncryptionService.Encrypt(plainPass, masterKey);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex,
-                        "Не удалось зашифровать domainuser/domainpass. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                if (!WriteSecureDomainCredentials(encryptedUser, encryptedPass))
-                {
-                    Log.Error(
-                        "Не удалось записать sdomainuser/sdomainpass в конфигурацию. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                Log.Information(
-                    "Учётные данные домена зашифрованы и сохранены в sdomainuser/sdomainpass. Class={Class}, Method={Method}",
-                    ClassName, method);
-            }
-
-            // В Domain передаём зашифрованные значения и короткий InstanceId
-            // (имена AD-групп WebShelf-{id}-*) — Domain не зависит от хранилища Data
-            Domain = new Domain(domainName, InstanceIdShort, encryptedUser, encryptedPass);
-
-            Log.Information(
-                "Домен инициализирован. Domain={Domain}, User={User}. Class={Class}, Method={Method}",
-                Domain.Name, "SystemAccount", ClassName, method);
-
-            // Проверка доступности AD: валидация сервисной учётки без проверки группы Users (открытый пароль)
-            bool isAvailable = Domain.ValidateAdCredentials(plainUser, plainPass, checkUsersGroup: false);
-            if (!isAvailable)
-            {
-                Log.Error(
-                    "Домен недоступен или сервисная учётная запись невалидна. Domain={Domain}, User={User}. Class={Class}, Method={Method}",
-                    Domain.Name, "SystemAccount", ClassName, method);
-                Domain = null;
-                return false;
-            }
-
-            Log.Information(
-                "Доступность домена подтверждена. Domain={Domain}. Class={Class}, Method={Method}",
-                Domain.Name, ClassName, method);
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex,
-                "Ошибка инициализации домена. Class={Class}, Method={Method}",
-                ClassName, method);
-            Domain = null;
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Имена ключей конфигурации для пары учётных данных: зашифрованные
-    /// (<c>s…user</c>/<c>s…pass</c>) и открытые (<c>…user</c>/<c>…pass</c>),
-    /// плюс подписи для логов. Позволяет одной процедуре записи
-    /// <see cref="WriteSecureCredentials"/> обслуживать домен, БД и TLS-сертификат.
-    /// Для секретов без «пользовательской» половины (пароль PFX-сертификата)
-    /// ключи имени передаются как <see langword="null"/>.
-    /// </summary>
-    /// <param name="SecureUserKey">Ключ зашифрованного имени учётной записи;
-    /// <see langword="null"/>, если пара не содержит имени.</param>
-    /// <param name="SecurePassKey">Ключ зашифрованного пароля учётной записи.</param>
-    /// <param name="PlainUserKey">Ключ открытого имени учётной записи (очищается после переноса);
-    /// <see langword="null"/>, если пара не содержит имени.</param>
-    /// <param name="PlainPassKey">Ключ открытого пароля учётной записи (очищается после переноса).</param>
-    /// <param name="OwnerLabel">Подпись владельца учётных данных для логов: "домена", "БД", "TLS-сертификата".</param>
-    /// <remarks>
-    /// Видимость <see langword="internal"/> — тестовая точка (шаг 0 дорожной
-    /// карты декомпозиции): тип является параметром
-    /// <see cref="WriteSecureCredentials"/> и переносится вместе с ней в шаге 6.
-    /// </remarks>
-    internal readonly record struct CredentialKeys(
-        string? SecureUserKey,
-        string SecurePassKey,
-        string? PlainUserKey,
-        string? PlainPassKey,
-        string OwnerLabel)
-    {
-        /// <summary>
-        /// Подпись пары зашифрованных ключей для логов:
-        /// "sdomainuser/sdomainpass", "sdbuser/sdbpass", "scertpass".
-        /// </summary>
-        internal string SecurePairLabel => SecureUserKey is null
-            ? SecurePassKey
-            : $"{SecureUserKey}/{SecurePassKey}";
-    }
-
-    /// <summary>
-    /// Ключи конфигурации сервисной учётной записи домена.
-    /// Видимость <see langword="internal"/> — тестовая точка (шаг 0 дорожной
-    /// карты декомпозиции): characterization-тесты используют фактические
-    /// наборы ключей, а не их копии.
-    /// </summary>
-    internal static readonly CredentialKeys DomainCredentialKeys =
-        new("sdomainuser", "sdomainpass", "domainuser", "domainpass", "домена");
-
-    /// <summary>
-    /// Ключи конфигурации сервисной учётной записи БД.
-    /// Видимость <see langword="internal"/> — по той же причине, что и
-    /// <see cref="DomainCredentialKeys"/> (шаг 0 дорожной карты декомпозиции).
-    /// </summary>
-    internal static readonly CredentialKeys DatabaseCredentialKeys =
-        new("sdbuser", "sdbpass", "dbuser", "dbpass", "БД");
-
-    /// <summary>
-    /// Ключи конфигурации пароля PFX-сертификата TLS (без «пользовательской» половины).
-    /// Видимость <see langword="internal"/> — по той же причине, что и
-    /// <see cref="DomainCredentialKeys"/> (шаг 0 дорожной карты декомпозиции).
-    /// </summary>
-    internal static readonly CredentialKeys TlsCredentialKeys =
-        new(null, "scertpass", null, "certpass", "TLS-сертификата");
-
-    /// <summary>
-    /// Записывает зашифрованные учётные данные в Server.conf по общей процедуре:
-    /// обновляет значения зашифрованных ключей, очищает открытые ключи,
-    /// сохраняет комментарии и порядок остальных строк.
-    /// </summary>
-    /// <param name="keys">Имена ключей конфигурации и подписи для логов.</param>
-    /// <param name="encryptedUser">Зашифрованное имя учётной записи (Base64);
-    /// <see langword="null"/>, если пара не содержит имени (пароль PFX-сертификата).</param>
-    /// <param name="encryptedPass">Зашифрованный пароль учётной записи (Base64).</param>
-    /// <returns><see langword="true"/> при успешной записи; иначе <see langword="false"/>.</returns>
-    /// <remarks>
-    /// Видимость <see langword="internal"/> — тестовая точка (шаг 0 дорожной
-    /// карты декомпозиции): characterization-тесты фиксируют фактическое
-    /// поведение записи до выноса процедуры в отдельный класс (шаг 6).
-    /// Метод принимает уже зашифрованные значения и сам криптографию
-    /// не вызывает — доступен для тестов на любой платформе.
-    /// </remarks>
-    internal bool WriteSecureCredentials(CredentialKeys keys, string? encryptedUser, string encryptedPass)
-    {
-        const string method = nameof(WriteSecureCredentials);
-
-        try
-        {
-            if (!File.Exists(ConfigFile))
-            {
-                Log.Error(
-                    "Файл конфигурации не найден при записи {Keys}. Class={Class}, Method={Method}, Path={Path}",
-                    keys.SecurePairLabel, ClassName, method, ConfigFile);
-                return false;
-            }
-
-            string[] lines = File.ReadAllLines(ConfigFile, Encoding.UTF8);
-            List<string> result = new(lines.Length + 4);
-
-            bool hasSecureUser = false;
-            bool hasSecurePass = false;
-            bool hasPlainUser = false;
-            bool hasPlainPass = false;
-
-            foreach (string line in lines)
-            {
-                string trimmed = line.Trim();
-
-                if (trimmed.Length == 0 || trimmed[0] == '#')
-                {
-                    result.Add(line);
-                    continue;
-                }
-
-                int eqIndex = trimmed.IndexOf('=');
-                if (eqIndex <= 0)
-                {
-                    result.Add(line);
-                    continue;
-                }
-
-                string key = trimmed[..eqIndex].Trim();
-
-                if (keys.SecureUserKey is not null &&
-                    key.Equals(keys.SecureUserKey, StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Add($"{keys.SecureUserKey}={encryptedUser}");
-                    hasSecureUser = true;
-                }
-                else if (key.Equals(keys.SecurePassKey, StringComparison.OrdinalIgnoreCase))
-                {
-                    result.Add($"{keys.SecurePassKey}={encryptedPass}");
-                    hasSecurePass = true;
-                }
-                else if (keys.PlainUserKey is not null &&
-                         key.Equals(keys.PlainUserKey, StringComparison.OrdinalIgnoreCase))
-                {
-                    // Открытый логин очищаем после переноса в зашифрованный ключ
-                    result.Add($"{keys.PlainUserKey}=");
-                    hasPlainUser = true;
-                }
-                else if (keys.PlainPassKey is not null &&
-                         key.Equals(keys.PlainPassKey, StringComparison.OrdinalIgnoreCase))
-                {
-                    // Открытый пароль очищаем после переноса в зашифрованный ключ
-                    result.Add($"{keys.PlainPassKey}=");
-                    hasPlainPass = true;
-                }
-                else
-                {
-                    result.Add(line);
-                }
-            }
-
-            if (keys.SecureUserKey is not null && !hasSecureUser)
-                result.Add($"{keys.SecureUserKey}={encryptedUser}");
-            if (!hasSecurePass)
-                result.Add($"{keys.SecurePassKey}={encryptedPass}");
-            if (keys.PlainUserKey is not null && !hasPlainUser)
-                result.Add($"{keys.PlainUserKey}=");
-            if (keys.PlainPassKey is not null && !hasPlainPass)
-                result.Add($"{keys.PlainPassKey}=");
-
-            // Атомарная подмена: запись во временный файл + File.Replace исключает
-            // появление усечённого конфига при сбое питания или аварийном завершении.
-            // Оставшийся после сбоя .tmp перезаписывается при следующей попытке
-            string tempPath = ConfigFile + ".tmp";
-            File.WriteAllLines(tempPath, result, Encoding.UTF8);
-            File.Replace(tempPath, ConfigFile, destinationBackupFileName: null);
-
-            Log.Information(
-                "Зашифрованные учётные данные {Owner} записаны в конфигурацию. Class={Class}, Method={Method}",
-                keys.OwnerLabel, ClassName, method);
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex,
-                "Ошибка записи {Keys}. Class={Class}, Method={Method}, Path={Path}",
-                keys.SecurePairLabel, ClassName, method, ConfigFile);
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Записывает зашифрованные <c>sdomainuser</c> и <c>sdomainpass</c> в Server.conf,
-    /// очищает значения <c>domainuser</c> и <c>domainpass</c>.
-    /// </summary>
-    /// <param name="encryptedUser">Зашифрованное имя сервисной учётки (Base64).</param>
-    /// <param name="encryptedPass">Зашифрованный пароль сервисной учётки (Base64).</param>
-    /// <returns><see langword="true"/> при успешной записи; иначе <see langword="false"/>.</returns>
-    private bool WriteSecureDomainCredentials(string encryptedUser, string encryptedPass)
-    {
-        return WriteSecureCredentials(DomainCredentialKeys, encryptedUser, encryptedPass);
-    }
-
-    /// <summary>
-    /// Асинхронно инициализирует <see cref="Database"/> из словаря конфигурации
-    /// и проверяет доступность PostgreSQL через сервисную учётную запись.
-    /// Расшифровка и валидация учётных данных выполняются однократно
-    /// в конструкторе <see cref="Database"/>.
-    /// <para>
-    /// Если заданы <c>sdbuser</c> и <c>sdbpass</c> — используются они
-    /// (значения уже зашифрованы мастер-ключом).
-    /// Если заданы <c>dbuser</c> и <c>dbpass</c> — значения шифруются мастер-ключом,
-    /// записываются в <c>sdbuser</c>/<c>sdbpass</c>, открытые поля очищаются.
-    /// </para>
-    /// </summary>
-    private async Task<bool> TryInitDatabaseAsync(Dictionary<string, string> config)
-    {
-        const string method = nameof(TryInitDatabaseAsync);
-
-        try
-        {
-            if (!config.TryGetValue("dbhost", out string? host) || string.IsNullOrWhiteSpace(host))
-            {
-                Log.Error("Отсутствует или пустой ключ dbhost. Class={Class}, Method={Method}", ClassName, method);
-                return false;
-            }
-
-            int port = 5432;
-            if (config.TryGetValue("dbport", out string? portStr) && !string.IsNullOrWhiteSpace(portStr))
-            {
-                if (!int.TryParse(portStr.Trim(), out port) || port < 1 || port > 65535)
-                {
-                    Log.Error(
-                        "Некорректное значение dbport={PortValue}. Class={Class}, Method={Method}",
-                        portStr, ClassName, method);
-                    return false;
-                }
-            }
-
-            if (!config.TryGetValue("dbname", out string? dbName) || string.IsNullOrWhiteSpace(dbName))
-            {
-                Log.Error("Отсутствует или пустой ключ dbname. Class={Class}, Method={Method}", ClassName, method);
-                return false;
-            }
-
-            // dbsslmode: Disable | Allow | Prefer | Require | VerifyCA | VerifyFull (по умолчанию Require)
-            SslMode sslMode = SslMode.Require;
-            if (config.TryGetValue("dbsslmode", out string? sslModeStr) && !string.IsNullOrWhiteSpace(sslModeStr))
-            {
-                if (!Enum.TryParse(sslModeStr.Trim(), ignoreCase: true, out sslMode) ||
-                    !Enum.IsDefined(typeof(SslMode), sslMode))
-                {
-                    Log.Error(
-                        "Некорректное значение dbsslmode={SslModeValue}. Допустимо: Disable, Allow, Prefer, Require, VerifyCA, VerifyFull. Class={Class}, Method={Method}",
-                        sslModeStr, ClassName, method);
-                    return false;
-                }
-            }
-
-            Log.Information(
-                "Режим SSL для БД: {SslMode}. Class={Class}, Method={Method}",
-                sslMode, ClassName, method);
-
-            // Отключённый SSL передаёт пароль сервисной записи БД по сети в открытом виде.
-            // Допустимо только внутри изолированного сегмента сети — предупреждение
-            // симметрично предупреждению о схеме http в Program.cs
-            if (sslMode == SslMode.Disable)
-            {
-                Log.Warning(
-                    "SSL отключён (dbsslmode=Disable): учётные данные БД передаются по сети без шифрования. Рекомендуется Require и выше. Class={Class}, Method={Method}",
-                    ClassName, method);
-            }
-
-            byte[]? masterKey = EncryptionService.EnsureMasterKey();
-            if (masterKey is null)
-            {
-                Log.Error(
-                    "Мастер-ключ недоступен для инициализации БД. Class={Class}, Method={Method}",
-                    ClassName, method);
-                return false;
-            }
-
-            config.TryGetValue("sdbuser", out string? sUser);
-            config.TryGetValue("sdbpass", out string? sPass);
-
-            string encryptedUser;
-            string encryptedPass;
-
-            bool hasSecure =
-                !string.IsNullOrWhiteSpace(sUser) &&
-                !string.IsNullOrWhiteSpace(sPass);
-
-            if (hasSecure)
-            {
-                // Расшифровка и валидация учётных данных выполняется однократно
-                // в конструкторе Database — здесь повторно не расшифровываем
-                encryptedUser = sUser!.Trim();
-                encryptedPass = sPass!.Trim();
-
-                Log.Information(
-                    "Учётные данные БД загружены из sdbuser/sdbpass. Class={Class}, Method={Method}",
-                    ClassName, method);
-
-                // Остаточные открытые dbuser/dbpass подлежат очистке: секреты
-                // не должны оставаться в конфигурации в незашифрованном виде
-                config.TryGetValue("dbuser", out string? leftoverUser);
-                config.TryGetValue("dbpass", out string? leftoverPass);
-
-                bool hasPlainLeftovers =
-                    !string.IsNullOrWhiteSpace(leftoverUser) ||
-                    !string.IsNullOrWhiteSpace(leftoverPass);
-
-                if (hasPlainLeftovers)
-                {
-                    if (WriteSecureDbCredentials(encryptedUser, encryptedPass))
-                    {
-                        Log.Information(
-                            "Остаточные открытые dbuser/dbpass очищены в конфигурации. Class={Class}, Method={Method}",
-                            ClassName, method);
-                    }
-                    else
-                    {
-                        Log.Warning(
-                            "Не удалось очистить остаточные открытые dbuser/dbpass. Class={Class}, Method={Method}",
-                            ClassName, method);
-                    }
-                }
-            }
-            else
-            {
-                if (!config.TryGetValue("dbuser", out string? dbUser) ||
-                    !config.TryGetValue("dbpass", out string? dbPass) ||
-                    string.IsNullOrWhiteSpace(dbUser) ||
-                    string.IsNullOrWhiteSpace(dbPass))
-                {
-                    Log.Error(
-                        "Отсутствуют dbuser/dbpass и sdbuser/sdbpass. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                string plainUser = dbUser.Trim();
-                string plainPass = dbPass.Trim();
-
-                try
-                {
-                    encryptedUser = EncryptionService.Encrypt(plainUser, masterKey);
-                    encryptedPass = EncryptionService.Encrypt(plainPass, masterKey);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex,
-                        "Не удалось зашифровать dbuser/dbpass. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                if (!WriteSecureDbCredentials(encryptedUser, encryptedPass))
-                {
-                    Log.Error(
-                        "Не удалось записать sdbuser/sdbpass в конфигурацию. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                Log.Information(
-                    "Учётные данные БД зашифрованы и сохранены в sdbuser/sdbpass. Class={Class}, Method={Method}",
-                    ClassName, method);
-            }
-
-            Database = new Database(host.Trim(), port, dbName.Trim(), sslMode, encryptedUser, encryptedPass);
-
-            Log.Information(
-                "БД инициализирована. Host={Host}, Port={Port}, Database={Database}, SslMode={SslMode}, User={User}. Class={Class}, Method={Method}",
-                Database.Host, Database.Port, Database.DatabaseName, Database.SslMode, "SystemAccount", ClassName, method);
-
-            // Проверка доступности выполняется асинхронно: TryInitDatabaseAsync
-            // вызывается из Program.Main через await, без sync-over-async
-            bool isAvailable = await Database.ValidateConnectionAsync().ConfigureAwait(false);
-            if (!isAvailable)
-            {
-                Log.Error(
-                    "БД недоступна или сервисная учётная запись невалидна. Host={Host}, Database={Database}, User={User}. Class={Class}, Method={Method}",
-                    Database.Host, Database.DatabaseName, "SystemAccount", ClassName, method);
-                Database.Dispose();
-                Database = null;
-                return false;
-            }
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex,
-                "Ошибка инициализации БД. Class={Class}, Method={Method}",
-                ClassName, method);
-            Database?.Dispose();
-            Database = null;
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Записывает зашифрованные <c>sdbuser</c> и <c>sdbpass</c> в Server.conf,
-    /// очищает значения <c>dbuser</c> и <c>dbpass</c>.
-    /// </summary>
-    /// <param name="encryptedUser">Зашифрованное имя сервисной учётки БД (Base64).</param>
-    /// <param name="encryptedPass">Зашифрованный пароль сервисной учётки БД (Base64).</param>
-    /// <returns><see langword="true"/> при успешной записи; иначе <see langword="false"/>.</returns>
-    private bool WriteSecureDbCredentials(string encryptedUser, string encryptedPass)
-    {
-        return WriteSecureCredentials(DatabaseCredentialKeys, encryptedUser, encryptedPass);
     }
 
     /// <summary>
@@ -983,183 +433,5 @@ internal sealed class Data
         }
 
         return int.TryParse(value.Trim(), out int parsed) ? parsed : null;
-    }
-
-    /// <summary>
-    /// Загружает TLS-сертификат для схемы https из ключей конфигурации:
-    /// <c>certpath</c> — путь к PFX-файлу, пароль — из <c>scertpass</c> (зашифрованный)
-    /// либо из <c>certpass</c> (открытый, шифруется и переносится в <c>scertpass</c>).
-    /// При схеме http инициализация пропускается (<see langword="true"/>).
-    /// Сертификат обязан содержать закрытый ключ.
-    /// </summary>
-    /// <param name="config">Словарь конфигурации.</param>
-    /// <returns><see langword="true"/>, если сертификат загружен или не требуется; иначе <see langword="false"/>.</returns>
-    private bool TryInitCertificate(Dictionary<string, string> config)
-    {
-        const string method = nameof(TryInitCertificate);
-
-        try
-        {
-            // Сертификат нужен только для прослушивания по https
-            if (!string.Equals(Scheme, "https", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            if (!config.TryGetValue("certpath", out string? certPath) || string.IsNullOrWhiteSpace(certPath))
-            {
-                Log.Error(
-                    "Отсутствует или пустой ключ certpath (обязателен при scheme=https). Class={Class}, Method={Method}",
-                    ClassName, method);
-                return false;
-            }
-
-            // Относительный путь ищется рядом с бинарниками приложения
-            string resolvedPath = certPath.Trim();
-            if (!Path.IsPathRooted(resolvedPath))
-            {
-                resolvedPath = Path.Combine(AppContext.BaseDirectory, resolvedPath);
-            }
-
-            if (!File.Exists(resolvedPath))
-            {
-                Log.Error(
-                    "Файл TLS-сертификата не найден. Path={Path}. Class={Class}, Method={Method}",
-                    resolvedPath, ClassName, method);
-                return false;
-            }
-
-            byte[]? masterKey = EncryptionService.EnsureMasterKey();
-            if (masterKey is null)
-            {
-                Log.Error(
-                    "Мастер-ключ недоступен при загрузке TLS-сертификата. Class={Class}, Method={Method}",
-                    ClassName, method);
-                return false;
-            }
-
-            string? password = null;
-
-            bool hasSecurePass = config.TryGetValue("scertpass", out string? sPass) &&
-                                 !string.IsNullOrWhiteSpace(sPass);
-            bool hasPlainPass = config.TryGetValue("certpass", out string? pPass) &&
-                                !string.IsNullOrWhiteSpace(pPass);
-
-            if (hasSecurePass)
-            {
-                try
-                {
-                    password = EncryptionService.Decrypt(sPass!.Trim(), masterKey);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex,
-                        "Не удалось расшифровать scertpass. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                // Остаточный открытый certpass подлежит очистке: секреты
-                // не должны оставаться в конфигурации в незашифрованном виде
-                if (hasPlainPass)
-                {
-                    if (WriteSecureCredentials(TlsCredentialKeys, null, sPass!.Trim()))
-                    {
-                        Log.Information(
-                            "Остаточный открытый certpass очищен в конфигурации. Class={Class}, Method={Method}",
-                            ClassName, method);
-                    }
-                    else
-                    {
-                        Log.Warning(
-                            "Не удалось очистить остаточный открытый certpass. Class={Class}, Method={Method}",
-                            ClassName, method);
-                    }
-                }
-            }
-            else if (hasPlainPass)
-            {
-                password = pPass!.Trim();
-
-                try
-                {
-                    string encryptedPass = EncryptionService.Encrypt(password, masterKey);
-                    if (!WriteSecureCredentials(TlsCredentialKeys, null, encryptedPass))
-                    {
-                        Log.Error(
-                            "Не удалось записать scertpass в конфигурацию. Class={Class}, Method={Method}",
-                            ClassName, method);
-                        return false;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex,
-                        "Не удалось зашифровать certpass. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                Log.Information(
-                    "Пароль TLS-сертификата зашифрован и сохранён в scertpass. Class={Class}, Method={Method}",
-                    ClassName, method);
-            }
-
-            // Пароль не требуется для PFX без защиты; null допустим
-            X509Certificate2 certificate;
-            try
-            {
-                // X509CertificateLoader (SYSLIB0057): современный способ загрузки PFX
-                certificate = X509CertificateLoader.LoadPkcs12FromFile(resolvedPath, password);
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex,
-                    "Не удалось загрузить TLS-сертификат (неверный файл или пароль). Path={Path}. Class={Class}, Method={Method}",
-                    resolvedPath, ClassName, method);
-                return false;
-            }
-
-            // Для серверного TLS обязателен закрытый ключ
-            if (!certificate.HasPrivateKey)
-            {
-                Log.Error(
-                    "Сертификат не содержит закрытого ключа. Path={Path}. Class={Class}, Method={Method}",
-                    resolvedPath, ClassName, method);
-                certificate.Dispose();
-                return false;
-            }
-
-            // Предупреждение о сроке действия не блокирует запуск
-            if (certificate.NotAfter < DateTimeOffset.UtcNow)
-            {
-                Log.Warning(
-                    "Срок действия TLS-сертификата истёк. NotAfter={NotAfter}. Class={Class}, Method={Method}",
-                    certificate.NotAfter, ClassName, method);
-            }
-            else if (certificate.NotAfter < DateTimeOffset.UtcNow.AddDays(14))
-            {
-                Log.Warning(
-                    "Срок действия TLS-сертификата истекает менее чем через 14 дней. NotAfter={NotAfter}. Class={Class}, Method={Method}",
-                    certificate.NotAfter, ClassName, method);
-            }
-
-            TlsCertificate = certificate;
-
-            Log.Information(
-                "TLS-сертификат загружен. Subject={Subject}, Thumbprint={Thumbprint}, NotAfter={NotAfter}. Class={Class}, Method={Method}",
-                certificate.Subject, certificate.Thumbprint, certificate.NotAfter, ClassName, method);
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex,
-                "Ошибка инициализации TLS-сертификата. Class={Class}, Method={Method}",
-                ClassName, method);
-            TlsCertificate?.Dispose();
-            TlsCertificate = null;
-            return false;
-        }
     }
 }

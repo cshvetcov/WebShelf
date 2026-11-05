@@ -169,10 +169,13 @@ fetch-запроса и обычного перехода при выходе), 
 имён (`Domain`),
 жизненный цикл `InstanceId` (`Data`), парсер `Server.conf`
 (`ServerConfigParser`: key=value — комментарии, дубликаты, регистр,
-UTF-8/BOM, CRLF, файл без валидных записей) и запись `Server.conf`
-(`Data`: защищённые учётные данные с затиранием открытых,
+UTF-8/BOM, CRLF, файл без валидных записей), запись `Server.conf`
+(`SecureCredentialsWriter`: защищённые учётные данные с затиранием открытых,
 сохранение комментариев и порядка строк, атомарная замена файла,
-байтовый формат; миграция при чтении конфигурации),
+байтовый формат) и инициализаторы секций конфигурации (`DomainSection`,
+`DatabaseSection`, `CertificateSection`: отказы до обращения к мастер-ключу,
+схема http без сертификата; миграция учётных данных при чтении —
+на уровне `Data.ReadConfigAsync`),
 валидация параметров БД (`Database`),
 заголовки безопасности (middleware), ролевая модель (каталог ролей:
 состав, старшинство, шаблоны и имена групп, вычисление роли по группам,
@@ -197,7 +200,11 @@ WebShelf/              Приложение Blazor Server
   Classes/Crypto/      Криптография: хранилище ключей (InstanceId и мастер-ключ:
                        HKCU + DPAPI) и движок шифрования (AES-256-CBC + HMAC-SHA256)
   Classes/Service/     Системные сервисы (конфигурация, шифрование данных, защита входа)
-  Classes/Service/Configuration/   Парсер файла конфигурации Server.conf (key=value)
+  Classes/Service/Configuration/   Конфигурация Server.conf: парсер (key=value)
+                       и запись защищённых учётных данных (с сохранением
+                       комментариев и порядка строк, атомарная замена файла)
+  Classes/Service/Configuration/Sections/   Инициализаторы секций конфигурации:
+                       домен AD, подключение PostgreSQL, TLS-сертификат
   Classes/DB/          Работа с PostgreSQL
   Classes/DC/          Работа с Active Directory
   Classes/Security/    Ролевая модель, эндпоинты входа/выхода

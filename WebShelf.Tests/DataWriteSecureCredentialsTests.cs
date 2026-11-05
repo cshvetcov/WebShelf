@@ -1,20 +1,22 @@
-using WebShelf.Classes.Service;
+using WebShelf.Classes.Service.Configuration;
 using Xunit;
 
 namespace WebShelf.Tests;
 
 /// <summary>
 /// Characterization-тесты записи защищённых учётных данных
-/// (<see cref="Data.WriteSecureCredentials"/>, шаг 0 дорожной карты
-/// декомпозиции). Фиксируют фактическое поведение процедуры записи
-/// до её выноса в отдельный класс (шаг 6): перенос открытых значений
-/// в защищённые с затиранием открытых, сохранение комментариев и порядка
-/// посторонних строк, дописывание отсутствующих ключей, атомарную замену
-/// файла и точный байтовый формат результата.
+/// (<see cref="SecureCredentialsWriter.WriteSecureCredentials"/>, шаг 0
+/// дорожной карты декомпозиции; шагом 6 переписаны с вызова
+/// <c>Data.WriteSecureCredentials</c> на вызов вынесенного писателя —
+/// контракт тот же, ожидания не менялись). Фиксируют фактическое
+/// поведение процедуры записи: перенос открытых значений в защищённые
+/// с затиранием открытых, сохранение комментариев и порядка посторонних
+/// строк, дописывание отсутствующих ключей, атомарную замену файла
+/// и точный байтовый формат результата.
 /// Метод принимает уже зашифрованные значения и криптографию не вызывает,
 /// поэтому тесты платформонезависимы. Каждый тест работает со своим
-/// временным файлом через конструктор <see cref="Data"/> с внедрённым
-/// путём (улучшение У2).
+/// временным файлом через конструктор <see cref="SecureCredentialsWriter"/>
+/// с внедрённым путём (улучшение У2).
 /// </summary>
 public class DataWriteSecureCredentialsTests
 {
@@ -37,10 +39,10 @@ public class DataWriteSecureCredentialsTests
                 "sdomainuser=STALE-OLD-VALUE",
                 "sdomainpass=STALE-OLD-VALUE");
 
-            Data data = new Data(path);
+            SecureCredentialsWriter writer = new(path);
 
-            bool result = data.WriteSecureCredentials(
-                Data.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
+            bool result = writer.WriteSecureCredentials(
+                SecureCredentialsWriter.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
 
             Assert.True(result);
 
@@ -82,10 +84,10 @@ public class DataWriteSecureCredentialsTests
                 "domainuser=svc-plain",
                 "domainpass=plain-secret");
 
-            Data data = new Data(path);
+            SecureCredentialsWriter writer = new(path);
 
-            bool result = data.WriteSecureCredentials(
-                Data.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
+            bool result = writer.WriteSecureCredentials(
+                SecureCredentialsWriter.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
 
             Assert.True(result);
 
@@ -129,10 +131,10 @@ public class DataWriteSecureCredentialsTests
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 "scheme=http");
 
-            Data data = new Data(path);
+            SecureCredentialsWriter writer = new(path);
 
-            bool result = data.WriteSecureCredentials(
-                Data.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
+            bool result = writer.WriteSecureCredentials(
+                SecureCredentialsWriter.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
 
             Assert.True(result);
 
@@ -170,10 +172,10 @@ public class DataWriteSecureCredentialsTests
                 "sdbuser=STALE",
                 "sdbpass=STALE");
 
-            Data data = new Data(path);
+            SecureCredentialsWriter writer = new(path);
 
-            bool result = data.WriteSecureCredentials(
-                Data.DatabaseCredentialKeys, "ENC-DB-USER", "ENC-DB-PASS");
+            bool result = writer.WriteSecureCredentials(
+                SecureCredentialsWriter.DatabaseCredentialKeys, "ENC-DB-USER", "ENC-DB-PASS");
 
             Assert.True(result);
 
@@ -207,10 +209,10 @@ public class DataWriteSecureCredentialsTests
                 "certpath=C:\\certs\\webshelf.pfx",
                 "certpass=plain-cert-secret");
 
-            Data data = new Data(path);
+            SecureCredentialsWriter writer = new(path);
 
-            bool result = data.WriteSecureCredentials(
-                Data.TlsCredentialKeys, encryptedUser: null, "ENC-CERT-PASS");
+            bool result = writer.WriteSecureCredentials(
+                SecureCredentialsWriter.TlsCredentialKeys, encryptedUser: null, "ENC-CERT-PASS");
 
             Assert.True(result);
 
@@ -240,10 +242,10 @@ public class DataWriteSecureCredentialsTests
         {
             string path = Path.Combine(directory, "Server.conf");
 
-            Data data = new Data(path);
+            SecureCredentialsWriter writer = new(path);
 
-            bool result = data.WriteSecureCredentials(
-                Data.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
+            bool result = writer.WriteSecureCredentials(
+                SecureCredentialsWriter.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
 
             Assert.False(result);
             Assert.False(File.Exists(path));
@@ -271,10 +273,10 @@ public class DataWriteSecureCredentialsTests
                 "domainuser=svc-plain",
                 "domainpass=plain-secret");
 
-            Data data = new Data(path);
+            SecureCredentialsWriter writer = new(path);
 
-            bool result = data.WriteSecureCredentials(
-                Data.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
+            bool result = writer.WriteSecureCredentials(
+                SecureCredentialsWriter.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
 
             Assert.True(result);
             Assert.True(File.Exists(path));
@@ -308,10 +310,10 @@ public class DataWriteSecureCredentialsTests
             // в создании .tmp — детерминированный отказ записи на любой платформе
             Directory.CreateDirectory(path + ".tmp");
 
-            Data data = new Data(path);
+            SecureCredentialsWriter writer = new(path);
 
-            bool result = data.WriteSecureCredentials(
-                Data.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
+            bool result = writer.WriteSecureCredentials(
+                SecureCredentialsWriter.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
 
             Assert.False(result);
 
@@ -332,9 +334,9 @@ public class DataWriteSecureCredentialsTests
     /// <summary>
     /// Байтовое сравнение результата записи: UTF-8 c BOM, системный
     /// перевод строки между строками, завершающий перевод строки после
-    /// последней строки. Зафиксировано, чтобы шаг 6 не изменил хвост
-    /// файла незаметно (File.WriteAllLines добавляет перевод строки
-    /// после каждой строки, включая последнюю).
+    /// последней строки. Зафиксировано, чтобы вынос записи (шаг 6)
+    /// не изменил хвост файла незаметно (File.WriteAllLines добавляет
+    /// перевод строки после каждой строки, включая последнюю).
     /// </summary>
     [Fact]
     public void WrittenFile_ByteExactContent_WithBomAndTrailingNewline()
@@ -347,10 +349,10 @@ public class DataWriteSecureCredentialsTests
                 "# Конфигурация",
                 "scheme=http");
 
-            Data data = new Data(path);
+            SecureCredentialsWriter writer = new(path);
 
-            bool result = data.WriteSecureCredentials(
-                Data.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
+            bool result = writer.WriteSecureCredentials(
+                SecureCredentialsWriter.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
 
             Assert.True(result);
 
@@ -388,10 +390,10 @@ public class DataWriteSecureCredentialsTests
                 "DomainUser=svc-plain",
                 "DomainPass=plain-secret");
 
-            Data data = new Data(path);
+            SecureCredentialsWriter writer = new(path);
 
-            bool result = data.WriteSecureCredentials(
-                Data.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
+            bool result = writer.WriteSecureCredentials(
+                SecureCredentialsWriter.DomainCredentialKeys, "ENC-USER", "ENC-PASS");
 
             Assert.True(result);
 
@@ -406,5 +408,16 @@ public class DataWriteSecureCredentialsTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// Конструктор с null-путём отказывает немедленно (ArgumentNullException) —
+    /// новая публичная граница класса после выноса записи из Data (шаг 6
+    /// дорожной карты; прецедент — тот же контракт у ServerConfigParser).
+    /// </summary>
+    [Fact]
+    public void Constructor_NullPath_ThrowsArgumentNullException()
+    {
+        Assert.Throws<ArgumentNullException>(() => new SecureCredentialsWriter(null!));
     }
 }
