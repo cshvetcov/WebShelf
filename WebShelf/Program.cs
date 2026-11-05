@@ -100,6 +100,11 @@ try
     // После успешного чтения конфигурации домен гарантированно инициализирован
     Domain domain = data.Domain!;
 
+    // Управление группами безопасности AD — AdGroupManager (шаг 7 декомпозиции):
+    // контекст подключения (имя домена, сервисная учётная запись) и короткий
+    // префикс InstanceId передаются явно, класс не зависит от Domain и Data
+    AdGroupManager groupManager = new(domain.Name, data.InstanceIdShort, domain.GetDecryptedUser, domain.GetDecryptedPassword);
+
     if (!RoleCatalog.Validate())
     {
         Log.Fatal(
@@ -116,7 +121,7 @@ try
         .. RoleCatalog.BuildGroupNameTemplates()
     ];
 
-    if (!domain.FillRequiredGroupsFromTemplates(groupNameTemplates))
+    if (!groupManager.FillRequiredGroupsFromTemplates(groupNameTemplates))
     {
         Log.Fatal(
             "Не удалось сформировать список необходимых групп безопасности AD. Приложение останавливается. Class={Class}, Method={Method}",
@@ -124,7 +129,7 @@ try
         return 1;
     }
 
-    if (!domain.EnsureRequiredGroupsExist())
+    if (!groupManager.EnsureRequiredGroupsExist())
     {
         Log.Fatal(
             "Не удалось создать необходимые группы безопасности AD. Приложение останавливается. Class={Class}, Method={Method}",

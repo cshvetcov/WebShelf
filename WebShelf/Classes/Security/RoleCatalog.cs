@@ -5,7 +5,7 @@ namespace WebShelf.Classes.Security;
 /// <summary>
 /// Каталог ролей WebShelf — единый источник истины о составе ролей, их именах,
 /// соответствии AD-группам и старшинстве. Все шаблоны имён ролевых групп
-/// (<see cref="Domain.FillRequiredGroupsFromTemplates"/>) выгружаются из этого
+/// (<see cref="AdGroupManager.FillRequiredGroupsFromTemplates"/>) выгружаются из этого
 /// каталога, поэтому добавление новой роли автоматически даёт: создание группы
 /// при старте, участие в вычислении роли и отображение в интерфейсе.
 /// Класс статичен; экземпляры <see cref="AppRole"/> создаются только здесь.
@@ -90,7 +90,7 @@ internal static class RoleCatalog
     ];
 
     /// <summary>
-    /// Строит шаблоны имён ролевых AD-групп для <see cref="Domain.FillRequiredGroupsFromTemplates"/>:
+    /// Строит шаблоны имён ролевых AD-групп для <see cref="AdGroupManager.FillRequiredGroupsFromTemplates"/>:
     /// по одному шаблону на каждую роль каталога. Группа доступа Users и роль Гость
     /// сюда не входят: Users — не роль (шаблон хранится в <see cref="Domain"/>),
     /// Гость не назначается через AD.

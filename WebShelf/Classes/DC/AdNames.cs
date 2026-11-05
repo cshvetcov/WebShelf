@@ -7,7 +7,8 @@ namespace WebShelf.Classes.DC;
 /// к формату <c>username@domain</c> и подстановка короткого префикса
 /// InstanceId в шаблон имени группы. Методы не обращаются к AD, конфигурации
 /// и состоянию приложения: все входные данные передаются параметрами.
-/// Используются <see cref="Domain"/>, эндпоинтами входа (<c>AccountEndpoints</c>)
+/// Используются <see cref="Domain"/>, менеджером групп
+/// (<see cref="AdGroupManager"/>), эндпоинтами входа (<c>AccountEndpoints</c>)
 /// и каталогом ролей (<c>RoleCatalog</c>).
 /// </summary>
 internal static class AdNames
@@ -98,7 +99,7 @@ internal static class AdNames
     /// для всех вхождений заполнителя и без учёта его регистра; шаблон без
     /// заполнителя возвращается без изменений (пробелы по краям обрезаются).
     /// Метод выполняет только подстановку: обнаружение опечаток в заполнителе
-    /// выполняет <see cref="Domain.FillRequiredGroupsFromTemplates"/>.
+    /// выполняет <see cref="AdGroupManager.FillRequiredGroupsFromTemplates"/>.
     /// </summary>
     /// <param name="template">Шаблон имени группы, например WebShelf-{InstanceIdShort}-Administrator.</param>
     /// <param name="instanceIdShort">Короткий префикс InstanceId (12 символов, нижний регистр).</param>

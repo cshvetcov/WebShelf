@@ -1,6 +1,6 @@
 # 0050 — Парсер Server.conf ServerConfigParser
 
-- **Хеш:** `(заполнить после коммита)`
+- **Хеш:** `61be2cc`
 - **Дата:** 2026-11-05
 - **Автор:** Constantine
 - **Сообщение:** refactor: вынос парсера Server.conf из Data в ServerConfigParser (шаг 5 декомпозиции)

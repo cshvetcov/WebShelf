@@ -6,10 +6,8 @@ namespace WebShelf.Classes.DC;
 
 /// <summary>
 /// Представляет домен Active Directory и предоставляет методы
-/// проверки учётных данных пользователя, а также обеспечения наличия
-/// групп безопасности, необходимых для функционирования WebShelf
-/// (формирование списка из шаблонов имён, проверка существования
-/// и создание от имени сервисной учётной записи).
+/// проверки учётных данных пользователя, а также запросов членства
+/// (прямые группы пользователя, участники группы).
 /// Реализует <see cref="IAdGroupSource"/>: расширенные имена групп и списки
 /// прямых групп пользователей для ролевой модели (см. WebShelf.Classes.Security).
 /// Используется в браузерном приложении WebShelf для работы
@@ -18,6 +16,9 @@ namespace WebShelf.Classes.DC;
 /// <remarks>
 /// Сервисный логин и пароль хранятся только в зашифрованном виде (мастер-ключ).
 /// Перед использованием для AD-операций значения расшифровываются.
+/// Формирование списка необходимых групп безопасности из шаблонов имён
+/// и обеспечение их существования в домене (проверка и создание) выделены
+/// в <see cref="AdGroupManager"/> (шаг 7 дорожной карты декомпозиции).
 /// </remarks>
 internal class Domain : IAdGroupSource
 {
@@ -56,27 +57,11 @@ internal class Domain : IAdGroupSource
     private readonly string _instanceIdShort;
 
     /// <summary>
-    /// Имена групп безопасности, необходимых для функционирования WebShelf.
-    /// Формируется при старте приложения методом <see cref="FillRequiredGroupsFromTemplates"/>
-    /// из шаблонов, передаваемых вызывающей стороной (группа доступа Users — шаблон
-    /// <see cref="Domain"/>, ролевые группы — <c>RoleCatalog.BuildGroupNameTemplates()</c>).
-    /// До формирования проверка и создание групп не выполняются.
-    /// </summary>
-    private readonly List<string> _requiredGroups = [];
-
-    /// <summary>
     /// Суффикс группы доступа (не роль): членство в WebShelf-{InstanceIdShort}-Users
     /// обязательно для входа в систему. Шаблон группы доступа хранится здесь —
     /// Users не входит в каталог ролевых групп.
     /// </summary>
     internal const string UsersGroupSuffix = "Users";
-
-    /// <summary>
-    /// Сформированный список имен групп безопасности, необходимых для функционирования
-    /// (только чтение). Наполняется методом <see cref="FillRequiredGroupsFromTemplates"/>;
-    /// до формирования список пуст.
-    /// </summary>
-    internal IReadOnlyList<string> RequiredGroups => _requiredGroups;
 
     /// <summary>
     /// Создаёт экземпляр класса <see cref="Domain"/>.
@@ -362,216 +347,6 @@ internal class Domain : IAdGroupSource
 
             throw new InvalidOperationException(
                 "Ошибка при проверке учётных данных в Active Directory.", ex);
-        }
-    }
-
-    /// <summary>
-    /// Формирует список групп безопасности, необходимых для функционирования WebShelf
-    /// (<see cref="RequiredGroups"/>), из списка шаблонов имен: заполнитель
-    /// <see cref="AdNames.InstanceIdShortPlaceholder"/> в каждом шаблоне заменяется коротким
-    /// префиксом InstanceId текущего экземпляра.
-    /// Например: WebShelf-{InstanceIdShort}-Administrator → WebShelf-000000000000-Administrator.
-    /// </summary>
-    /// <param name="templates">Список шаблонов имен групп.</param>
-    /// <returns>
-    /// <see langword="true"/>, если список сформирован (в том числе из пустого списка
-    /// шаблонов); <see langword="false"/> — если список шаблонов не задан или содержит
-    /// пустые имена. Шаблоны с некорректным заполнителем пропускаются и на результат
-    /// не влияют.
-    /// </returns>
-    /// <remarks>
-    /// Предыдущее содержимое списка полностью заменяется. Дубликаты имен
-    /// (без учёта регистра) отбрасываются. Шаблон, совсем не содержащий заполнителя,
-    /// используется как имя группы без изменений, без предупреждений в логе.
-    /// Шаблон с некорректным заполнителем (опечатка — например {InstanseIdShort} —
-    /// либо лишняя или незакрытая фигурная скобка) в список не добавляется,
-    /// в лог пишется предупреждение.
-    /// Вызывается при старте приложения до <see cref="EnsureRequiredGroupsExist"/>.
-    /// </remarks>
-    internal bool FillRequiredGroupsFromTemplates(IEnumerable<string> templates)
-    {
-        const string method = nameof(FillRequiredGroupsFromTemplates);
-
-        if (templates is null)
-        {
-            Log.Error(
-                "Список шаблонов имен групп не задан. Class={Class}, Method={Method}",
-                ClassName, method);
-            return false;
-        }
-
-        try
-        {
-            List<string> groupNames = [];
-
-            foreach (string template in templates)
-            {
-                // Пустой шаблон — ошибка формирования списка: состав групп неизвестен
-                if (string.IsNullOrWhiteSpace(template))
-                {
-                    Log.Error(
-                        "Список шаблонов содержит пустое имя группы. Class={Class}, Method={Method}",
-                        ClassName, method);
-                    return false;
-                }
-
-                string trimmed = template.Trim();
-                string groupName = AdNames.ExpandGroupTemplate(trimmed, _instanceIdShort);
-
-                if (groupName.Contains('{') || groupName.Contains('}'))
-                {
-                    // После подстановки остались фигурные скобки — заполнитель написан
-                    // с опечаткой (например, {InstanseIdShort}) либо искажён. Имя не
-                    // привязано к экземпляру, поэтому в список групп его не включаем
-                    Log.Warning(
-                        "Шаблон {Template} содержит некорректный заполнитель (ожидается {Placeholder}); имя в список групп не добавлено. Class={Class}, Method={Method}",
-                        trimmed, AdNames.InstanceIdShortPlaceholder, ClassName, method);
-                    continue;
-                }
-
-                // Шаблон корректен: либо содержал заполнитель (заменён), либо совсем
-                // без заполнителя — такое имя используется как есть, без предупреждения
-                groupNames.Add(groupName);
-            }
-
-            // Дубликаты (без учёта регистра) убираем: повторная проверка одной группы бессмысленна
-            _requiredGroups.Clear();
-            _requiredGroups.AddRange(groupNames.Distinct(StringComparer.OrdinalIgnoreCase));
-
-            Log.Information(
-                "Список групп безопасности сформирован из шаблонов. Count={Count}. Class={Class}, Method={Method}",
-                _requiredGroups.Count, ClassName, method);
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(
-                ex,
-                "Ошибка формирования списка групп из шаблонов. Class={Class}, Method={Method}",
-                ClassName, method);
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Обеспечивает наличие в домене групп безопасности, необходимых для
-    /// функционирования WebShelf: проверяет существование каждой группы из списка
-    /// (<see cref="_requiredGroups"/>) и создаёт отсутствующие.
-    /// Проверка и создание выполняются от имени сервисной учётной записи,
-    /// заданной в конфигурационном файле Server.conf.
-    /// </summary>
-    /// <remarks>
-    /// Список групп формируется при старте приложения методом
-    /// <see cref="FillRequiredGroupsFromTemplates"/> из шаблонов каталога ролей.
-    /// Пустой список считается корректным состоянием — метод сразу возвращает
-    /// <see langword="true"/> без обращения к AD.
-    /// Группы создаются как группы безопасности, локальные в домене (Domain Local),
-    /// с уникальным в домене именем (sAMAccountName); описание связывает группу
-    /// с экземпляром WebShelf.
-    /// </remarks>
-    /// <returns>
-    /// <see langword="true"/>, если все группы уже существуют или успешно созданы
-    /// (в том числе при пустом списке); <see langword="false"/> — если список содержит
-    /// пустые имена либо возникла ошибка при проверке или создании группы.
-    /// </returns>
-    internal bool EnsureRequiredGroupsExist()
-    {
-        const string method = nameof(EnsureRequiredGroupsExist);
-
-        // Пустые имена в списке — ошибка его заполнения: требуемый состав групп
-        // неизвестен, продолжать нельзя
-        if (_requiredGroups.Any(string.IsNullOrWhiteSpace))
-        {
-            Log.Error(
-                "Список групп безопасности содержит пустое имя. Class={Class}, Method={Method}",
-                ClassName, method);
-            return false;
-        }
-
-        // Дубликаты (без учёта регистра) убираем: повторная проверка одной группы бессмысленна
-        List<string> requiredGroups = _requiredGroups
-            .Select(name => name.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (requiredGroups.Count == 0)
-        {
-            Log.Information(
-                "Список групп безопасности пуст — проверка и создание не требуются. Class={Class}, Method={Method}",
-                ClassName, method);
-            return true;
-        }
-
-        try
-        {
-            string serviceUser = GetDecryptedUser();
-            string servicePassword = GetDecryptedPassword();
-
-            // Работа с объектами AD — от имени сервисной учётной записи из конфигурации;
-            // реальное имя учётной записи в логах не фигурирует
-            using PrincipalContext context = new(ContextType.Domain, Name, serviceUser, servicePassword);
-
-            foreach (string groupName in requiredGroups)
-            {
-                // Ищем по sAMAccountName и по имени (регистр не важен) —
-                // так же ищется группа Users в ValidateAdCredentials
-                using GroupPrincipal? existingGroup =
-                    GroupPrincipal.FindByIdentity(context, IdentityType.SamAccountName, groupName) ??
-                    GroupPrincipal.FindByIdentity(context, IdentityType.Name, groupName);
-
-                if (existingGroup is not null)
-                {
-                    Log.Debug(
-                        "Группа {Group} уже существует. Class={Class}, Method={Method}, Domain={Domain}",
-                        groupName, ClassName, method, Name);
-                    continue;
-                }
-
-                try
-                {
-                    // Доменно-локальная (Domain Local) группа безопасности.
-                    // В перечислении GroupScope нет члена DomainLocal: доменно-локальная
-                    // область представлена членом Local — при ContextType.Domain
-                    // создаётся именно Domain Local группа (поддерживается в AD DS).
-                    // Описание связывает группу с экземпляром WebShelf
-                    using GroupPrincipal newGroup = new GroupPrincipal(context, groupName)
-                    {
-                        IsSecurityGroup = true,
-                        GroupScope = GroupScope.Local,
-                        Description = $"Группа безопасности WebShelf (экземпляр {_instanceIdShort})"
-                    };
-                    newGroup.Save();
-                }
-                catch (PrincipalExistsException ex)
-                {
-                    // Группа создана параллельно между проверкой и сохранением —
-                    // считаем её существующей
-                    Log.Warning(
-                        ex,
-                        "Группа {Group} уже существует (создана параллельно). Class={Class}, Method={Method}, Domain={Domain}",
-                        groupName, ClassName, method, Name);
-                    continue;
-                }
-
-                Log.Information(
-                    "Создана группа безопасности {Group}. Class={Class}, Method={Method}, Domain={Domain}",
-                    groupName, ClassName, method, Name);
-            }
-
-            Log.Information(
-                "Все группы безопасности ({Count} шт.) существуют или созданы. Class={Class}, Method={Method}, Domain={Domain}",
-                requiredGroups.Count, ClassName, method, Name);
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Log.Error(
-                ex,
-                "Ошибка при проверке или создании групп безопасности AD. Class={Class}, Method={Method}, Domain={Domain}",
-                ClassName, method, Name);
-            return false;
         }
     }
 

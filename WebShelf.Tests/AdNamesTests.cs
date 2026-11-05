@@ -147,7 +147,7 @@ public class AdNamesTests
     /// Метод выполняет только подстановку и не отклоняет шаблон с опечаткой:
     /// некорректный заполнитель (опечатка, незакрытая или лишняя фигурная скобка)
     /// проходит в результат без изменений, корректные вхождения при этом заменяются.
-    /// Отбраковка таких шаблонов выполняется в FillRequiredGroupsFromTemplates.
+    /// Отбраковка таких шаблонов выполняется в AdGroupManager.FillRequiredGroupsFromTemplates.
     /// </summary>
     [Theory]
     [InlineData("WebShelf-{InstanseIdShort}-Administrator", "abcdef012345", "WebShelf-{InstanseIdShort}-Administrator")]
