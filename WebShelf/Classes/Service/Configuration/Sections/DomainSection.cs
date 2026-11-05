@@ -36,7 +36,9 @@ internal static class DomainSection
     /// группы Users).
     /// <para>
     /// Если заданы <c>sdomainuser</c> и <c>sdomainpass</c> — используются они
-    /// (значения уже зашифрованы мастер-ключом).
+    /// (значения уже зашифрованы мастер-ключом); непустые остаточные открытые
+    /// <c>domainuser</c>/<c>domainpass</c> при этом затираются (улучшение У1
+    /// дорожной карты декомпозиции — симметрия с парами БД и TLS).
     /// Если заданы <c>domainuser</c> и <c>domainpass</c> — значения шифруются мастер-ключом,
     /// записываются в <c>sdomainuser</c>/<c>sdomainpass</c>, открытые поля очищаются.
     /// </para>
@@ -129,6 +131,33 @@ internal static class DomainSection
                 Log.Information(
                     "Учётные данные домена загружены из sdomainuser/sdomainpass. Class={Class}, Method={Method}",
                     ClassName, method);
+
+                // Остаточные открытые domainuser/domainpass подлежат очистке: секреты
+                // не должны оставаться в конфигурации в незашифрованном виде
+                // (улучшение У1 дорожной карты декомпозиции, шаг 6 — симметрия
+                // с парами БД и TLS, затирающими остаточные открытые значения)
+                config.TryGetValue("domainuser", out string? leftoverUser);
+                config.TryGetValue("domainpass", out string? leftoverPass);
+
+                bool hasPlainLeftovers =
+                    !string.IsNullOrWhiteSpace(leftoverUser) ||
+                    !string.IsNullOrWhiteSpace(leftoverPass);
+
+                if (hasPlainLeftovers)
+                {
+                    if (credentialsWriter.WriteSecureDomainCredentials(encryptedUser, encryptedPass))
+                    {
+                        Log.Information(
+                            "Остаточные открытые domainuser/domainpass очищены в конфигурации. Class={Class}, Method={Method}",
+                            ClassName, method);
+                    }
+                    else
+                    {
+                        Log.Warning(
+                            "Не удалось очистить остаточные открытые domainuser/domainpass. Class={Class}, Method={Method}",
+                            ClassName, method);
+                    }
+                }
             }
             else
             {

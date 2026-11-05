@@ -8,9 +8,9 @@ namespace WebShelf.Tests;
 /// <see cref="Data.ReadConfigAsync"/> (шаг 0 дорожной карты декомпозиции).
 /// Фиксируют фактическое поведение чтения Server.conf: перенос открытых
 /// учётных данных в защищённые с затиранием открытых, отсутствие
-/// перезаписи файла при чистых защищённых значениях и асимметрию
-/// очистки остаточных открытых значений (пробел У1 — будет закрыт
-/// в шаге 6).
+/// перезаписи файла при чистых защищённых значениях и симметричную
+/// очистку остаточных открытых значений (У1 закрыт в шаге 6:
+/// доменная пара ведёт себя как пары БД и TLS).
 /// Сценарии требуют реального мастер-ключа (HKCU + DPAPI), поэтому
 /// выполняются только на Windows и автоматически пропускаются на других
 /// платформах. Домен и БД недоступны в тестовом окружении — миграция
@@ -133,15 +133,17 @@ public class DataConfigMigrationTests
     }
 
     /// <summary>
-    /// Пробел У1 (фиксация перед исправлением в шаге 6): при одновременно
+    /// Улучшение У1 (закрыто в шаге 6, ранее тест фиксировал асимметрию
+    /// под именем …PlainLeftovers_Remain_UntilStep6): при одновременно
     /// непустых открытых и валидных защищённых доменных значениях
-    /// защищённая ветка TryInitDomain открытые значения НЕ затирает —
-    /// они остаются в файле в открытом виде, файл не переписывается.
-    /// ОЖИДАНИЕ БУДЕТ ИЗМЕНЕНО В ШАГЕ 6 (улучшение У1): открытые значения
-    /// станут затираться, файл — переписываться один раз.
+    /// защищённая ветка TryInitDomain затирает открытые значения —
+    /// поведение симметрично парам БД и TLS. Затирание выполняется
+    /// до проверки доступности AD: файл переписан, хотя конфигурация
+    /// в целом не загружается (домен недоступен); защищённые значения
+    /// сохраняются без изменений.
     /// </summary>
     [Fact]
-    public async Task ReadConfigAsync_SecureDomainCredentials_PlainLeftovers_Remain_UntilStep6()
+    public async Task ReadConfigAsync_SecureDomainCredentials_PlainLeftovers_Wiped()
     {
         Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
         byte[]? masterKey = EncryptionService.EnsureMasterKey();
@@ -152,29 +154,35 @@ public class DataConfigMigrationTests
         try
         {
             string path = Path.Combine(directory, "Server.conf");
+            string encryptedUser = EncryptionService.Encrypt("svc-account", key);
+            string encryptedPass = EncryptionService.Encrypt("svc-secret", key);
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",
-                $"sdomainuser={EncryptionService.Encrypt("svc-account", key)}",
-                $"sdomainpass={EncryptionService.Encrypt("svc-secret", key)}",
+                "sdomainuser=" + encryptedUser,
+                "sdomainpass=" + encryptedPass,
                 "domainuser=LEFTOVER-USER",
                 "domainpass=LEFTOVER-SECRET",
                 "scheme=http",
                 "port=38080");
-
-            byte[] before = File.ReadAllBytes(path);
 
             Data data = new Data(path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();
 
-            Assert.False(result); // домен недоступен
+            // Домен недоступен — конфигурация не загружена,
+            // но очистка остаточных значений уже выполнена (как у пар БД и TLS)
+            Assert.False(result);
 
-            // Документация текущего поведения (асимметрия У1):
-            // непустые открытые значения остаются в файле без изменений
-            Assert.Equal(before, File.ReadAllBytes(path));
-            Assert.Contains("domainuser=LEFTOVER-USER", File.ReadAllLines(path));
-            Assert.Contains("domainpass=LEFTOVER-SECRET", File.ReadAllLines(path));
+            string[] lines = File.ReadAllLines(path);
+            Assert.Contains("domainuser=", lines);
+            Assert.Contains("domainpass=", lines);
+            Assert.DoesNotContain("domainuser=LEFTOVER-USER", lines);
+            Assert.DoesNotContain("domainpass=LEFTOVER-SECRET", lines);
+
+            // Защищённые значения сохранены без изменений
+            Assert.Contains("sdomainuser=" + encryptedUser, lines);
+            Assert.Contains("sdomainpass=" + encryptedPass, lines);
         }
         finally
         {
@@ -183,11 +191,60 @@ public class DataConfigMigrationTests
     }
 
     /// <summary>
-    /// Пара БД, в отличие от доменной пары, уже зачищает остаточные
-    /// открытые значения: при валидных sdbuser/sdbpass и непустых
-    /// dbuser/dbpass защищённая ветка перезаписывает файл, затирая
-    /// открытые значения (симметричное поведение, ожидаемое от У1
-    /// после шага 6).
+    /// Идемпотентность миграции после У1 (шаг 6): файл переписывается ровно
+    /// один раз — при первом чтении, обнаружившем непустые открытые значения
+    /// при валидных защищённых. Повторное чтение конфигурации с чистыми
+    /// защищёнными значениями файл не переписывает (байтово идентичен).
+    /// </summary>
+    [Fact]
+    public async Task ReadConfigAsync_AfterLeftoverWipe_SecondReadDoesNotRewriteFile()
+    {
+        Assert.SkipWhen(!OperatingSystem.IsWindows(), "Требуется Windows: мастер-ключ хранится в HKCU под защитой DPAPI.");
+        byte[]? masterKey = EncryptionService.EnsureMasterKey();
+        Assert.SkipUnless(masterKey is not null, "Мастер-ключ недоступен.");
+        byte[] key = masterKey!; // SkipUnless гарантирует ненулевое значение при продолжении
+
+        string directory = DataConfigTestHelpers.CreateTempDirectory();
+        try
+        {
+            string path = Path.Combine(directory, "Server.conf");
+            string encryptedUser = EncryptionService.Encrypt("svc-account", key);
+            string encryptedPass = EncryptionService.Encrypt("svc-secret", key);
+            DataConfigTestHelpers.WriteUtf8NoBom(path,
+                $"domainname={UnreachableDomain}",
+                "sdomainuser=" + encryptedUser,
+                "sdomainpass=" + encryptedPass,
+                "domainuser=LEFTOVER-USER",
+                "domainpass=LEFTOVER-SECRET",
+                "scheme=http",
+                "port=38080");
+
+            Data data = new Data(path);
+            data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
+
+            bool firstResult = await data.ReadConfigAsync();
+            Assert.False(firstResult); // домен недоступен; остаточные значения затёрты
+
+            byte[] afterFirstRead = File.ReadAllBytes(path);
+
+            bool secondResult = await data.ReadConfigAsync();
+            Assert.False(secondResult); // домен по-прежнему недоступен
+
+            // Второй прогон файл не трогает: непустых открытых значений больше нет
+            Assert.Equal(afterFirstRead, File.ReadAllBytes(path));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Пара БД зачищает остаточные открытые значения: при валидных
+    /// sdbuser/sdbpass и непустых dbuser/dbpass защищённая ветка
+    /// перезаписывает файл, затирая открытые значения. После У1 (шаг 6)
+    /// поведение всех трёх пар — домена, БД и TLS — симметрично;
+    /// тест сохранён как независимая фиксация пары БД.
     /// </summary>
     [Fact]
     public async Task ReadConfigAsync_SecureDbCredentials_PlainLeftovers_Wiped()
