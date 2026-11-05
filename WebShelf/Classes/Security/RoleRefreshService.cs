@@ -9,24 +9,17 @@ namespace WebShelf.Classes.Security;
 /// в анонимное состояние. При недоступности AD пользователи пропускаются:
 /// массовый выход не выполняется.
 /// </summary>
-internal sealed class RoleRefreshService : BackgroundService
+/// <remarks>
+/// Конструктор (первичный) синтезируется <see langword="public"/> — контейнер DI
+/// активирует службы только через public-конструктор, при этом сам класс
+/// остаётся <see langword="internal"/> и наружу сборки не виден.
+/// </remarks>
+internal sealed class RoleRefreshService(
+    RoleResolver roleResolver,
+    RoleChangeNotifier changeNotifier,
+    RoleCacheOptions options) : BackgroundService
 {
     private const string ClassName = "WebShelf.Classes.Security.RoleRefreshService";
-
-    private readonly RoleResolver _resolver;
-    private readonly RoleChangeNotifier _notifier;
-    private readonly RoleCacheOptions _options;
-
-    /// <summary>
-    /// Конструктор объявлен <see langword="public"/> (сам класс остаётся internal):
-    /// контейнер DI находит только public-конструкторы.
-    /// </summary>
-    public RoleRefreshService(RoleResolver roleResolver, RoleChangeNotifier changeNotifier, RoleCacheOptions options)
-    {
-        _resolver = roleResolver;
-        _notifier = changeNotifier;
-        _options = options;
-    }
 
     /// <summary>
     /// Цикл опроса: первый опрос через интервал после старта (состояние на момент
@@ -39,13 +32,13 @@ internal sealed class RoleRefreshService : BackgroundService
 
         Log.Information(
             "Фоновый опрос ролевых групп запущен. IntervalSec={Interval}. Class={Class}, Method={Method}",
-            (int)_options.PollInterval.TotalSeconds, ClassName, method);
+            (int)options.PollInterval.TotalSeconds, ClassName, method);
 
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                await Task.Delay(_options.PollInterval, stoppingToken);
+                await Task.Delay(options.PollInterval, stoppingToken);
                 PollOnce();
             }
         }
@@ -74,14 +67,14 @@ internal sealed class RoleRefreshService : BackgroundService
 
         try
         {
-            List<string> usernames = _resolver.GetTrackedUsernames().ToList();
+            List<string> usernames = [.. roleResolver.GetTrackedUsernames()];
 
             foreach (string username in usernames)
             {
                 // Значение из кэша до запроса = «предыдущее»: ResolveFresh
                 // перезапишет кэш, сравнение будет с состоянием «до»
-                RoleResolution? before = _resolver.Peek(username);
-                RoleResolution? fresh = _resolver.ResolveFresh(username);
+                RoleResolution? before = roleResolver.Peek(username);
+                RoleResolution? fresh = roleResolver.ResolveFresh(username);
 
                 if (fresh is null)
                 {
@@ -100,7 +93,7 @@ internal sealed class RoleRefreshService : BackgroundService
                     || before.EffectiveRole.SystemName != fresh.EffectiveRole.SystemName
                     || before.HasUsersGroup != fresh.HasUsersGroup)
                 {
-                    _notifier.Notify(username, fresh);
+                    changeNotifier.Notify(username, fresh);
                 }
             }
         }

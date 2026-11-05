@@ -94,7 +94,7 @@ internal static class DatabaseSection
             if (config.TryGetValue("dbsslmode", out string? sslModeStr) && !string.IsNullOrWhiteSpace(sslModeStr))
             {
                 if (!Enum.TryParse(sslModeStr.Trim(), ignoreCase: true, out sslMode) ||
-                    !Enum.IsDefined(typeof(SslMode), sslMode))
+                    !Enum.IsDefined(sslMode))
                 {
                     Log.Error(
                         "Некорректное значение dbsslmode={SslModeValue}. Допустимо: Disable, Allow, Prefer, Require, VerifyCA, VerifyFull. Class={Class}, Method={Method}",
@@ -126,22 +126,22 @@ internal static class DatabaseSection
                 return null;
             }
 
-            config.TryGetValue("sdbuser", out string? sUser);
-            config.TryGetValue("sdbpass", out string? sPass);
+            string? secureUser = config.TryGetValue("sdbuser", out string? sUser) && !string.IsNullOrWhiteSpace(sUser)
+                ? sUser
+                : null;
+            string? securePass = config.TryGetValue("sdbpass", out string? sPass) && !string.IsNullOrWhiteSpace(sPass)
+                ? sPass
+                : null;
 
             string encryptedUser;
             string encryptedPass;
 
-            bool hasSecure =
-                !string.IsNullOrWhiteSpace(sUser) &&
-                !string.IsNullOrWhiteSpace(sPass);
-
-            if (hasSecure)
+            if (secureUser is not null && securePass is not null)
             {
                 // Расшифровка и валидация учётных данных выполняется однократно
                 // в конструкторе Database — здесь повторно не расшифровываем
-                encryptedUser = sUser!.Trim();
-                encryptedPass = sPass!.Trim();
+                encryptedUser = secureUser.Trim();
+                encryptedPass = securePass.Trim();
 
                 Log.Information(
                     "Учётные данные БД загружены из sdbuser/sdbpass. Class={Class}, Method={Method}",

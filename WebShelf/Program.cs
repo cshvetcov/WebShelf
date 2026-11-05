@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
+using System.Globalization;
 using Serilog.Events;
 using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DC;
@@ -13,6 +14,11 @@ using WebShelf.Components;
 // Единый шаблон вывода логов: используется и bootstrap-логгером, и логгером хоста
 const string LogOutputTemplate =
     "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{ThreadId}] {Message:lj}{NewLine}{Exception}";
+
+// Единые константы Class/Method для логов топ-уровня (требование Логирование.md:
+// каждое сообщение содержит Class={Class}, Method={Method})
+const string ClassName = "WebShelf.Program";
+const string MethodName = "Main";
 
 // Лог последнего запуска (только Debug): перед каждым стартом очищается,
 // поэтому содержит лог только текущего запуска. Объявлена внутри #if DEBUG:
@@ -60,7 +66,7 @@ Data data = new(keyStore, cryptoEngine);
 
 try
 {
-    Log.Information("WebShelf запускается...");
+    Log.Information("WebShelf запускается. Class={Class}, Method={Method}", ClassName, MethodName);
 
     string version = ThisAssembly.AssemblyInformationalVersion.Split('+')[0];
 
@@ -70,7 +76,7 @@ try
         "Версия: {Version}, Commit={Commit}. Class={Class}, Method={Method}",
         version,
         commitShort,
-        "WebShelf.Program", "Main");
+        ClassName, MethodName);
 
     // Один экземпляр на учётную запись Windows.
     // return (вместо Environment.Exit) гарантирует выполнение finally:
@@ -86,18 +92,18 @@ try
     {
         Log.Fatal(
             "Не удалось обеспечить InstanceId (реестр/DPAPI). Приложение останавливается. Class={Class}, Method={Method}",
-            "WebShelf.Program", "Main");
+            ClassName, MethodName);
         return 1;
     }
 
     data.SetInstanceId(instanceId);
     Log.Information(
         "InstanceId готов. Short={Short}. Class={Class}, Method={Method}",
-        data.InstanceIdShort, "WebShelf.Program", "Main");
+        data.InstanceIdShort, ClassName, MethodName);
 
     if (!await data.ReadConfigAsync())
     {
-        Log.Fatal("Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}", "WebShelf.Program", "Main");
+        Log.Fatal("Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}", ClassName, MethodName);
         return 1;
     }
 
@@ -110,8 +116,17 @@ try
     // {InstanceIdShort} заменяется коротким префиксом InstanceId;
     // 2) проверка существования групп и создание отсутствующих от имени сервисной УЗ.
     // При любой ошибке приложение завершается — без необходимых групп оно не работает.
-    // После успешного чтения конфигурации домен гарантированно инициализирован
-    Domain domain = data.Domain!;
+    // После успешного чтения конфигурации домен гарантированно инициализирован;
+    // явная проверка вместо null-forgiving ('!') — не доверяем инварианту вслепую
+    if (data.Domain is not Domain initializedDomain)
+    {
+        Log.Fatal(
+            "Домен не инициализирован после загрузки конфигурации. Приложение останавливается. Class={Class}, Method={Method}",
+            ClassName, MethodName);
+        return 1;
+    }
+
+    Domain domain = initializedDomain;
 
     // Управление группами безопасности AD — AdGroupManager (шаг 7 декомпозиции):
     // контекст подключения (имя домена, сервисная учётная запись) и короткий
@@ -122,7 +137,7 @@ try
     {
         Log.Fatal(
             "Каталог ролей неконсистентен (дубликаты или пустые значения). Приложение останавливается. Class={Class}, Method={Method}",
-            "WebShelf.Program", "Main");
+            ClassName, MethodName);
         return 1;
     }
 
@@ -138,7 +153,7 @@ try
     {
         Log.Fatal(
             "Не удалось сформировать список необходимых групп безопасности AD. Приложение останавливается. Class={Class}, Method={Method}",
-            "WebShelf.Program", "Main");
+            ClassName, MethodName);
         return 1;
     }
 
@@ -146,7 +161,7 @@ try
     {
         Log.Fatal(
             "Не удалось создать необходимые группы безопасности AD. Приложение останавливается. Class={Class}, Method={Method}",
-            "WebShelf.Program", "Main");
+            ClassName, MethodName);
         return 1;
     }
 
@@ -154,7 +169,9 @@ try
     // Проверяется после создания групп: если в группе администраторов нет ни одного
     // участника — предупреждение в лог (запуск не блокируется: группа могла быть
     // только что создана и ждёт первого участника).
-    string? adminGroup = domain.GetExpandedGroupName(RoleCatalog.Administrator.GroupSuffix!);
+    string? adminGroup = RoleCatalog.Administrator.GroupSuffix is string adminGroupSuffix
+        ? domain.GetExpandedGroupName(adminGroupSuffix)
+        : null;
     if (adminGroup is not null)
     {
         List<string>? adminMembers = domain.GetGroupMemberNames(adminGroup);
@@ -162,7 +179,7 @@ try
         {
             Log.Warning(
                 "В группе администраторов {Group} нет участников — нарушено требование наличия минимум одного администратора. Class={Class}, Method={Method}",
-                adminGroup, "WebShelf.Program", "Main");
+                adminGroup, ClassName, MethodName);
         }
     }
 
@@ -172,7 +189,7 @@ try
     {
         Log.Warning(
             "Схема http: cookie аутентификации передаются без защиты Secure. Рекомендуется использовать https. Class={Class}, Method={Method}",
-            "WebShelf.Program", "Main");
+            ClassName, MethodName);
     }
 
     WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
@@ -180,12 +197,21 @@ try
     // Единая настройка Serilog для bootstrap-логгера и хоста (без дублирования)
     builder.Host.UseSerilog((context, services, configuration) => ApplySerilogDefaults(configuration));
 
+    // Порт гарантирован успешным ReadConfigAsync; явная проверка вместо null-forgiving ('!')
+    if (data.Port is not int listenPort)
+    {
+        Log.Fatal(
+            "Порт прослушивания не задан. Приложение останавливается. Class={Class}, Method={Method}",
+            ClassName, MethodName);
+        return 1;
+    }
+
     // Схема и порт только из Server.conf (независимо от launchSettings.json и профилей http/https)
-    string listenUrl = $"{data.Scheme}://0.0.0.0:{data.Port}";
+    string listenUrl = $"{data.Scheme}://0.0.0.0:{listenPort}";
     builder.WebHost.UseUrls(listenUrl);
     Log.Information(
         "Прослушивание {ListenUrl} (Server.conf). Class={Class}, Method={Method}",
-        listenUrl, "WebShelf.Program", "Main");
+        listenUrl, ClassName, MethodName);
 
     #region TLS-сертификат для схемы https
     // При https Kestrel обязан получить сертификат явно — без него запуск невозможен.
@@ -197,7 +223,7 @@ try
         {
             Log.Fatal(
                 "TLS-сертификат недоступен: прослушивание по https невозможно. Приложение останавливается. Class={Class}, Method={Method}",
-                "WebShelf.Program", "Main");
+                ClassName, MethodName);
             return 1;
         }
 
@@ -206,7 +232,7 @@ try
 
         builder.WebHost.ConfigureKestrel(options =>
         {
-            options.Listen(IPAddress.Any, data.Port!.Value, listenOptions =>
+            options.Listen(IPAddress.Any, listenPort, listenOptions =>
             {
                 listenOptions.UseHttps(tlsCertificate);
             });
@@ -214,7 +240,7 @@ try
 
         Log.Information(
             "TLS-сертификат привязан к Kestrel. Subject={Subject}, NotAfter={NotAfter}. Class={Class}, Method={Method}",
-            tlsCertificate.Subject, tlsCertificate.NotAfter, "WebShelf.Program", "Main");
+            tlsCertificate.Subject, tlsCertificate.NotAfter, ClassName, MethodName);
     }
     #endregion
 
@@ -232,7 +258,7 @@ try
 
     Log.Information(
         "Data Protection keys: {KeysPath}. Class={Class}, Method={Method}",
-        keysPath, "WebShelf.Program", "Main");
+        keysPath, ClassName, MethodName);
     #endregion
 
     #region Аутентификация через куки
@@ -302,7 +328,15 @@ try
     // при builder.Build()
     builder.Services.AddSingleton<IAdGroupSource>(domain);
     builder.Services.AddSingleton(TimeProvider.System);
-    builder.Services.AddSingleton(data.RoleCacheOptions!);
+    if (data.RoleCacheOptions is not RoleCacheOptions roleCacheOptions)
+    {
+        Log.Fatal(
+            "Параметры ролевой модели не инициализированы. Приложение останавливается. Class={Class}, Method={Method}",
+            ClassName, MethodName);
+        return 1;
+    }
+
+    builder.Services.AddSingleton(roleCacheOptions);
     builder.Services.AddSingleton<RoleResolver>();
     builder.Services.AddSingleton<RoleChangeNotifier>();
     builder.Services.AddScoped<AuthenticationStateProvider, AppAuthenticationStateProvider>();
@@ -350,7 +384,7 @@ try
 }
 catch (Exception ex)
 {
-    Log.Fatal(ex, "Исключение в {Class}.{Method}", "WebShelf.Program", "Main");
+    Log.Fatal(ex, "Исключение в {Class}.{Method}", ClassName, MethodName);
     throw;
 }
 finally
@@ -380,13 +414,17 @@ static LoggerConfiguration ApplySerilogDefaults(LoggerConfiguration configuratio
             .Enrich.FromLogContext()
             .Enrich.WithEnvironmentName()
             .Enrich.WithThreadId()
-            .WriteTo.Debug()
+            // formatProvider: инвариантная культура — формат сообщений и временных меток
+            // не зависит от локали ОС (CA1305); Serilog по умолчанию использует invariant,
+            // здесь это зафиксировано явно
+            .WriteTo.Debug(outputTemplate: LogOutputTemplate, formatProvider: CultureInfo.InvariantCulture)
             .WriteTo.File(
                 path: Path.Combine(AppContext.BaseDirectory, "logs", "webshelf-.log"),
                 rollingInterval: RollingInterval.Day,
                 retainedFileCountLimit: 30,
                 shared: true,
-                outputTemplate: LogOutputTemplate);
+                outputTemplate: LogOutputTemplate,
+                formatProvider: CultureInfo.InvariantCulture);
 
 #if DEBUG
         // Дублируем лог в Last.log: файл очищается перед каждым Debug-стартом,
@@ -395,7 +433,8 @@ static LoggerConfiguration ApplySerilogDefaults(LoggerConfiguration configuratio
         config = config.WriteTo.File(
             path: Path.Combine(AppContext.BaseDirectory, "logs", LastLogFileName),
             shared: true,
-            outputTemplate: LogOutputTemplate);
+            outputTemplate: LogOutputTemplate,
+            formatProvider: CultureInfo.InvariantCulture);
 #endif
 
         return config;

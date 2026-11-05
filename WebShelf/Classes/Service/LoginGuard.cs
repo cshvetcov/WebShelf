@@ -38,19 +38,30 @@ internal sealed class LoginGuard : IDisposable
     private bool _disposed;
 
     /// <summary>
+    /// Источник текущего времени (UTC) для окон попыток и блокировок.
+    /// По умолчанию — <see cref="TimeProvider.System"/>; в юнит-тестах подменяется
+    /// управляемым источником времени без ожидания реальных задержек.
+    /// </summary>
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>
     /// Создаёт экземпляр класса <see cref="LoginGuard"/>
     /// и запускает фоновую очистку устаревших состояний.
     /// </summary>
+    /// <param name="timeProvider">Источник времени для окон попыток и блокировок;
+    /// не задан (прямой вызов в тестах) — <see cref="TimeProvider.System"/>;
+    /// при активации из DI внедряется зарегистрированный <see cref="TimeProvider"/>.</param>
     /// <remarks>
     /// Конструктор объявлен <see langword="public"/> (сам класс остаётся internal):
     /// тип регистрируется в контейнере DI через <c>AddSingleton&lt;LoginGuard&gt;()</c>,
     /// а <c>Microsoft.Extensions.DependencyInjection</c> активирует сервисы только
     /// через public-конструктор — internal-конструктор контейнером не находится.
     /// </remarks>
-    public LoginGuard()
+    public LoginGuard(TimeProvider? timeProvider = null)
     {
         const string method = ".ctor";
 
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _cleanupTimer = new Timer(RemoveStaleStates, null, CleanupInterval, CleanupInterval);
 
         Log.Information(
@@ -72,7 +83,7 @@ internal sealed class LoginGuard : IDisposable
 
         try
         {
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             int maxRemain = 0;
 
             foreach (string key in BuildKeys(clientIp, username))
@@ -111,12 +122,12 @@ internal sealed class LoginGuard : IDisposable
 
         try
         {
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             int maxRemain = 0;
 
             foreach (string key in BuildKeys(clientIp, username))
             {
-                AttemptState state = _states.GetOrAdd(key, _ => new AttemptState());
+                AttemptState state = _states.GetOrAdd(key, _ => new AttemptState(_timeProvider));
 
                 lock (state.Sync)
                 {
@@ -220,7 +231,7 @@ internal sealed class LoginGuard : IDisposable
 
         try
         {
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             int removed = 0;
 
             foreach (KeyValuePair<string, AttemptState> pair in _states)
@@ -289,16 +300,18 @@ internal sealed class LoginGuard : IDisposable
     }
 
     /// <summary>Состояние попыток для одного ключа (IP или пользователь).</summary>
-    private sealed class AttemptState
+    /// <param name="timeProvider">Источник времени — момент начала первого окна попыток.</param>
+    private sealed class AttemptState(TimeProvider timeProvider)
     {
-        /// <summary>Объект синхронизации доступа к состоянию.</summary>
-        internal readonly object Sync = new();
+        /// <summary>Блокировка доступа к состоянию (C# 13 <see cref="Lock"/> —
+        /// специализированный тип блокировки вместо <c>object</c>).</summary>
+        internal readonly Lock Sync = new();
 
         /// <summary>Число неудачных попыток в текущем окне.</summary>
         internal int Failures;
 
         /// <summary>Начало текущего окна попыток.</summary>
-        internal DateTimeOffset WindowStart = DateTimeOffset.UtcNow;
+        internal DateTimeOffset WindowStart = timeProvider.GetUtcNow();
 
         /// <summary>Момент окончания активной блокировки (если установлена).</summary>
         internal DateTimeOffset? LockedUntil;

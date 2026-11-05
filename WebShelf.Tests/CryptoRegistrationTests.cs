@@ -29,7 +29,7 @@ public class CryptoRegistrationTests
     public void CryptoServices_RegisteredAsReadySingletons_ResolveSameInstance()
     {
         KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
-        CryptoEngine cryptoEngine = new CryptoEngine();
+        CryptoEngine cryptoEngine = new();
 
         ServiceCollection services = new();
 

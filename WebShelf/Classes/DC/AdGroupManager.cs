@@ -227,10 +227,12 @@ internal sealed class AdGroupManager
         }
 
         // Дубликаты (без учёта регистра) убираем: повторная проверка одной группы бессмысленна
-        List<string> requiredGroups = _requiredGroups
-            .Select(name => name.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        List<string> requiredGroups =
+        [
+            .. _requiredGroups
+                .Select(name => name.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+        ];
 
         if (requiredGroups.Count == 0)
         {
@@ -272,7 +274,7 @@ internal sealed class AdGroupManager
                     // область представлена членом Local — при ContextType.Domain
                     // создаётся именно Domain Local группа (поддерживается в AD DS).
                     // Описание связывает группу с экземпляром WebShelf
-                    using GroupPrincipal newGroup = new GroupPrincipal(context, groupName)
+                    using GroupPrincipal newGroup = new(context, groupName)
                     {
                         IsSecurityGroup = true,
                         GroupScope = GroupScope.Local,

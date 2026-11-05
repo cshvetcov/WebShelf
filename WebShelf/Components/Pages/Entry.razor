@@ -1,9 +1,10 @@
 ﻿@page "/entry"
 @rendermode InteractiveServer
-@implements IDisposable
+@implements IAsyncDisposable
 
 @using Microsoft.AspNetCore.Antiforgery
 @using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.WebUtilities
 @using Microsoft.Extensions.Primitives
 @using WebShelf.Classes.Service
 @using WebShelf.Components.Shared
@@ -45,7 +46,7 @@
                 <input type="text"
                        id="username"
                        name="username"
-                       placeholder="Login"
+                       placeholder="Логин"
                        required
                        autofocus
                        autocomplete="username"
@@ -59,7 +60,7 @@
                 <input type="password"
                        id="password"
                        name="password"
-                       placeholder="Password"
+                       placeholder="Пароль"
                        required
                        autocomplete="current-password"
                        disabled="@isLocked" />
@@ -83,7 +84,7 @@
         </div>
 
         <button type="submit" class="ws-btn-primary" disabled="@isLocked">
-            @(isLocked ? $"Вход временно заблокирован" : "Войти")
+            @(isLocked ? "Вход временно заблокирован" : "Войти")
         </button>
 
         @if (isLocked)
@@ -119,6 +120,12 @@
     private System.Threading.Timer? _lockoutTimer;
 
     /// <summary>
+    /// ES-модуль AppWindow.razor.js (JS-isolation) для страховки CSRF-токена:
+    /// импортируется лениво — только если токен не получен из HttpContext.
+    /// </summary>
+    private IJSObjectReference? _windowModule;
+
+    /// <summary>
     /// Инициализация: если уже авторизован — на Home; иначе CSRF, ошибка из query, блокировка.
     /// Токен получается из HttpContext текущего HTTP-запроса: при prerender это
     /// документ-запрос, при интерактивном рендере — стартовый запрос circuit
@@ -144,7 +151,7 @@
             _tokenMissing = string.IsNullOrEmpty(antiforgeryToken);
 
             Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
-            Dictionary<string, StringValues> query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+            Dictionary<string, StringValues> query = QueryHelpers.ParseQuery(uri.Query);
 
             if (query.TryGetValue("error", out StringValues error))
             {
@@ -204,7 +211,8 @@
                 return;
             }
 
-            string? fromMeta = await Js.InvokeAsync<string?>("WebShelfWindow.getAntiforgeryToken");
+            _windowModule ??= await Js.InvokeAsync<IJSObjectReference>("import", "./Components/Shared/AppWindow.razor.js");
+            string? fromMeta = await _windowModule.InvokeAsync<string?>("getAntiforgeryToken");
             if (!string.IsNullOrEmpty(fromMeta))
             {
                 antiforgeryToken = fromMeta;
@@ -229,6 +237,7 @@
     /// <summary>
     /// Запускает обратный отсчёт блокировки на форме.
     /// </summary>
+    /// <param name="seconds">Число секунд до снятия блокировки.</param>
     private void StartLockout(int seconds)
     {
         try
@@ -238,21 +247,7 @@
             errorMessage = string.Empty;
 
             _lockoutTimer?.Dispose();
-            _lockoutTimer = new System.Threading.Timer(_ =>
-            {
-                _ = InvokeAsync(() =>
-                {
-                    lockoutSeconds--;
-                    if (lockoutSeconds <= 0)
-                    {
-                        isLocked = false;
-                        lockoutSeconds = 0;
-                        _lockoutTimer?.Dispose();
-                        _lockoutTimer = null;
-                    }
-                    StateHasChanged();
-                });
-            }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+            _lockoutTimer = new System.Threading.Timer(_ => _ = TickLockoutAsync(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
         }
         catch (Exception ex)
         {
@@ -261,11 +256,61 @@
     }
 
     /// <summary>
-    /// Освобождает таймер блокировки.
+    /// Один тик обратного отсчёта. Асинхронный вызов выделен из колбэка таймера:
+    /// задача не отбрасывается молча — все исключения наблюдаются и логируются
+    /// (необработанное исключение в отброшенной задаче таймера способно уронить процесс).
     /// </summary>
-    public void Dispose()
+    private async Task TickLockoutAsync()
+    {
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                lockoutSeconds--;
+                if (lockoutSeconds <= 0)
+                {
+                    isLocked = false;
+                    lockoutSeconds = 0;
+                    _lockoutTimer?.Dispose();
+                    _lockoutTimer = null;
+                }
+                StateHasChanged();
+            });
+        }
+        catch (JSDisconnectedException)
+        {
+            // Цепь Blazor разорвана — страница уходит, отсчёт больше не нужен.
+            _lockoutTimer?.Dispose();
+            _lockoutTimer = null;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(TickLockoutAsync));
+        }
+    }
+
+    /// <summary>
+    /// Освобождает таймер блокировки и ссылку на импортированный JS-модуль.
+    /// </summary>
+    public async ValueTask DisposeAsync()
     {
         _lockoutTimer?.Dispose();
         _lockoutTimer = null;
+
+        if (_windowModule is not null)
+        {
+            try
+            {
+                await _windowModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            _windowModule = null;
+        }
     }
 }

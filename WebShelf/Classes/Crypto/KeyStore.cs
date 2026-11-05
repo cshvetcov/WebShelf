@@ -11,6 +11,12 @@ namespace WebShelf.Classes.Crypto;
 /// мастер-ключа в памяти (sliding TTL + absolute max).
 /// </summary>
 /// <remarks>
+/// Первичный конструктор: параметр <c>timeProvider</c> — источник времени для
+/// TTL кэша мастер-ключа; по умолчанию <see cref="TimeProvider.System"/>.
+/// Производственный код создаёт один экземпляр в <c>Program.Main</c>
+/// и регистрирует его в DI как готовый singleton; юнит-тесты создают независимые
+/// экземпляры (кэш и блокировки — на уровне экземпляра) или подменяют
+/// класс фейком (улучшение У3 дорожной карты декомпозиции).
 /// Класс выделен из <c>EncryptionService</c> механическим переносом
 /// (шаг 3 дорожной карты декомпозиции); изменения при переносе — только
 /// константа <c>Class=</c> в логах перенесённого кода (принцип 6 дорожной карты).
@@ -26,7 +32,7 @@ namespace WebShelf.Classes.Crypto;
 /// работать под выделенной служебной учёткой (например, DOMAIN\svc_webshelf),
 /// чтобы HKCU и DPAPI относились к ней, а не к интерактивному пользователю.
 /// </remarks>
-internal class KeyStore
+internal class KeyStore(TimeProvider? timeProvider = null)
 {
     private const string ClassName = "WebShelf.Classes.Crypto.KeyStore";
 
@@ -60,27 +66,23 @@ internal class KeyStore
     /// <summary>Максимальное время непрерывного хранения ключа в кэше (absolute cap).</summary>
     private readonly TimeSpan MasterKeyCacheAbsoluteMax = TimeSpan.FromMinutes(30);
 
-    private readonly object MasterKeyCacheSync = new();
+    private readonly Lock MasterKeyCacheSync = new();
 
     /// <summary>
     /// Синхронизация чтения/генерации/записи мастер-ключа в реестр:
     /// исключает гонку при первом параллельном вызове EnsureMasterKey.
     /// </summary>
-    private readonly object RegistrySync = new();
+    private readonly Lock RegistrySync = new();
     private byte[]? _cachedMasterKey;
     private DateTimeOffset _cachedMasterKeyExpiresUtc = DateTimeOffset.MinValue;
     private DateTimeOffset _cachedMasterKeyLoadedUtc = DateTimeOffset.MinValue;
 
     /// <summary>
-    /// Создаёт экземпляр <see cref="KeyStore"/>.
-    /// Производственный код создаёт один экземпляр в <c>Program.Main</c>
-    /// и регистрирует его в DI как singleton; юнит-тесты создают независимые
-    /// экземпляры (кэш и блокировки — на уровне экземпляра) или подменяют
-    /// класс фейком (улучшение У3 дорожной карты декомпозиции).
+    /// Источник текущего времени (UTC) для sliding/absolute TTL кэша мастер-ключа.
+    /// По умолчанию — <see cref="TimeProvider.System"/>; в юнит-тестах подменяется
+    /// управляемым источником времени без обращения к реальным часам.
     /// </summary>
-    public KeyStore()
-    {
-    }
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     #region Создание ключа
 
@@ -265,10 +267,7 @@ internal class KeyStore
 
         foreach (char c in value)
         {
-            bool ok = (c >= '0' && c <= '9')
-                      || (c >= 'A' && c <= 'Z')
-                      || (c >= 'a' && c <= 'z');
-            if (!ok)
+            if (c is not (>= '0' and <= '9' or >= 'A' and <= 'Z' or >= 'a' and <= 'z'))
                 return false;
         }
 
@@ -612,7 +611,7 @@ internal class KeyStore
             if (_cachedMasterKey is null)
                 return null;
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
 
             if (now - _cachedMasterKeyLoadedUtc >= MasterKeyCacheAbsoluteMax)
             {
@@ -645,7 +644,7 @@ internal class KeyStore
         {
             ClearCachedMasterKey_NoLock();
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset now = _timeProvider.GetUtcNow();
             _cachedMasterKey = (byte[])key.Clone();
             _cachedMasterKeyLoadedUtc = now;
             _cachedMasterKeyExpiresUtc = now.Add(MasterKeyCacheTtl);

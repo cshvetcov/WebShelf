@@ -91,7 +91,7 @@ internal sealed class RoleCacheOptions
             return TimeSpan.FromSeconds(defaultSeconds);
         }
 
-        if (seconds.Value < MinSeconds || seconds.Value > MaxSeconds)
+        if (seconds.Value is < MinSeconds or > MaxSeconds)
         {
             source = $"вне диапазона {MinSeconds}–{MaxSeconds}, принято по умолчанию";
             return TimeSpan.FromSeconds(defaultSeconds);

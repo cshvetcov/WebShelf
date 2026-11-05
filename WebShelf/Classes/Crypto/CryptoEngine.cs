@@ -73,14 +73,11 @@ internal class CryptoEngine
 
         try
         {
-            if (data is null)
-                throw new ArgumentNullException(nameof(data));
+            ArgumentNullException.ThrowIfNull(data);
 
             ValidateKey(key);
 
-            byte[] aesKey;
-            byte[] hmacKey;
-            DeriveKeys(key, out aesKey, out hmacKey);
+            DeriveKeys(key, out byte[] aesKey, out byte[] hmacKey);
 
             try
             {
@@ -95,10 +92,8 @@ internal class CryptoEngine
                     aes.GenerateIV();
                     iv = aes.IV;
 
-                    using (ICryptoTransform encryptor = aes.CreateEncryptor())
-                    {
-                        cipherText = encryptor.TransformFinalBlock(data, 0, data.Length);
-                    }
+                    using ICryptoTransform encryptor = aes.CreateEncryptor();
+                    cipherText = encryptor.TransformFinalBlock(data, 0, data.Length);
                 }
 
                 int resultLength = 1 + IvSizeBytes + cipherText.Length + HmacSizeBytes;
@@ -107,11 +102,9 @@ internal class CryptoEngine
                 Buffer.BlockCopy(iv, 0, result, 1, IvSizeBytes);
                 Buffer.BlockCopy(cipherText, 0, result, 1 + IvSizeBytes, cipherText.Length);
 
-                using (HMACSHA256 hmac = new HMACSHA256(hmacKey))
-                {
-                    byte[] mac = hmac.ComputeHash(result, 0, result.Length - HmacSizeBytes);
-                    Buffer.BlockCopy(mac, 0, result, result.Length - HmacSizeBytes, HmacSizeBytes);
-                }
+                using HMACSHA256 hmac = new(hmacKey);
+                byte[] mac = hmac.ComputeHash(result, 0, result.Length - HmacSizeBytes);
+                Buffer.BlockCopy(mac, 0, result, result.Length - HmacSizeBytes, HmacSizeBytes);
 
                 Log.Debug(
                     "Данные зашифрованы. PlainLength={PlainLength}, CipherLength={CipherLength}. Class={Class}, Method={Method}",
@@ -165,8 +158,7 @@ internal class CryptoEngine
 
         try
         {
-            if (base64Key is null)
-                throw new ArgumentNullException(nameof(base64Key));
+            ArgumentNullException.ThrowIfNull(base64Key);
 
             byte[] key = Convert.FromBase64String(base64Key);
             try
@@ -217,8 +209,7 @@ internal class CryptoEngine
 
         try
         {
-            if (plainText is null)
-                throw new ArgumentNullException(nameof(plainText));
+            ArgumentNullException.ThrowIfNull(plainText);
 
             byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
             byte[] encryptedBytes = Encrypt(plainBytes, key);
@@ -262,10 +253,8 @@ internal class CryptoEngine
 
         try
         {
-            if (plainText is null)
-                throw new ArgumentNullException(nameof(plainText));
-            if (base64Key is null)
-                throw new ArgumentNullException(nameof(base64Key));
+            ArgumentNullException.ThrowIfNull(plainText);
+            ArgumentNullException.ThrowIfNull(base64Key);
 
             byte[] key = Convert.FromBase64String(base64Key);
             try
@@ -318,8 +307,7 @@ internal class CryptoEngine
 
         try
         {
-            if (encryptedData is null)
-                throw new ArgumentNullException(nameof(encryptedData));
+            ArgumentNullException.ThrowIfNull(encryptedData);
 
             ValidateKey(key);
 
@@ -349,29 +337,25 @@ internal class CryptoEngine
                 throw new CryptographicException("Некорректная длина зашифрованных данных.");
             }
 
-            byte[] aesKey;
-            byte[] hmacKey;
-            DeriveKeys(key, out aesKey, out hmacKey);
+            DeriveKeys(key, out byte[] aesKey, out byte[] hmacKey);
 
             try
             {
                 int macOffset = encryptedData.Length - HmacSizeBytes;
 
-                using (HMACSHA256 hmac = new HMACSHA256(hmacKey))
-                {
-                    byte[] expectedMac = hmac.ComputeHash(encryptedData, 0, macOffset);
+                using HMACSHA256 hmac = new(hmacKey);
+                byte[] expectedMac = hmac.ComputeHash(encryptedData, 0, macOffset);
 
-                    // Сравнение MAC за постоянное время (реализация BCL) — защита от timing-атак
-                    bool isValidMac = CryptographicOperations.FixedTimeEquals(
-                        expectedMac,
-                        encryptedData.AsSpan(macOffset, HmacSizeBytes));
-                    if (!isValidMac)
-                    {
-                        Log.Warning(
-                            "Проверка целостности данных не пройдена. Class={Class}, Method={Method}",
-                            ClassName, method);
-                        throw new CryptographicException("Проверка целостности данных не пройдена.");
-                    }
+                // Сравнение MAC за постоянное время (реализация BCL) — защита от timing-атак
+                bool isValidMac = CryptographicOperations.FixedTimeEquals(
+                    expectedMac,
+                    encryptedData.AsSpan(macOffset, HmacSizeBytes));
+                if (!isValidMac)
+                {
+                    Log.Warning(
+                        "Проверка целостности данных не пройдена. Class={Class}, Method={Method}",
+                        ClassName, method);
+                    throw new CryptographicException("Проверка целостности данных не пройдена.");
                 }
 
                 byte[] iv = new byte[IvSizeBytes];
@@ -387,10 +371,8 @@ internal class CryptoEngine
                     aes.Padding = PaddingMode.PKCS7;
                     aes.IV = iv;
 
-                    using (ICryptoTransform decryptor = aes.CreateDecryptor())
-                    {
-                        plainText = decryptor.TransformFinalBlock(cipherText, 0, cipherText.Length);
-                    }
+                    using ICryptoTransform decryptor = aes.CreateDecryptor();
+                    plainText = decryptor.TransformFinalBlock(cipherText, 0, cipherText.Length);
                 }
 
                 Log.Debug(
@@ -442,8 +424,7 @@ internal class CryptoEngine
 
         try
         {
-            if (base64Key is null)
-                throw new ArgumentNullException(nameof(base64Key));
+            ArgumentNullException.ThrowIfNull(base64Key);
 
             byte[] key = Convert.FromBase64String(base64Key);
             try
@@ -495,8 +476,7 @@ internal class CryptoEngine
 
         try
         {
-            if (encryptedBase64 is null)
-                throw new ArgumentNullException(nameof(encryptedBase64));
+            ArgumentNullException.ThrowIfNull(encryptedBase64);
 
             byte[] encryptedData = Convert.FromBase64String(encryptedBase64);
             byte[] plainBytes = Decrypt(encryptedData, key);
@@ -546,10 +526,8 @@ internal class CryptoEngine
 
         try
         {
-            if (encryptedBase64 is null)
-                throw new ArgumentNullException(nameof(encryptedBase64));
-            if (base64Key is null)
-                throw new ArgumentNullException(nameof(base64Key));
+            ArgumentNullException.ThrowIfNull(encryptedBase64);
+            ArgumentNullException.ThrowIfNull(base64Key);
 
             byte[] key = Convert.FromBase64String(base64Key);
             try
@@ -588,8 +566,7 @@ internal class CryptoEngine
     /// </summary>
     private static void ValidateKey(byte[] key)
     {
-        if (key is null)
-            throw new ArgumentNullException(nameof(key));
+        ArgumentNullException.ThrowIfNull(key);
 
         if (key.Length != MasterKeySizeBytes)
         {
@@ -604,11 +581,9 @@ internal class CryptoEngine
     /// </summary>
     private static void DeriveKeys(byte[] masterKey, out byte[] aesKey, out byte[] hmacKey)
     {
-        using (HMACSHA256 kdf = new HMACSHA256(masterKey))
-        {
-            aesKey = kdf.ComputeHash(AesKeyDerivationLabel);
-            hmacKey = kdf.ComputeHash(HmacKeyDerivationLabel);
-        }
+        using HMACSHA256 kdf = new(masterKey);
+        aesKey = kdf.ComputeHash(AesKeyDerivationLabel);
+        hmacKey = kdf.ComputeHash(HmacKeyDerivationLabel);
     }
 
     /// <summary>

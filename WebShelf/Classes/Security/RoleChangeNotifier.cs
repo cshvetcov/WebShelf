@@ -17,8 +17,9 @@ internal sealed class RoleChangeNotifier
     private readonly Dictionary<string, List<Action<RoleResolution>>> _subscriptions =
         new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Сериализация изменений списка подписок: опрос и цепочки работают в разных потоках.</summary>
-    private readonly object _lock = new();
+    /// <summary>Сериализация изменений списка подписок: опрос и цепочки работают в разных потоках
+    /// (C# 13 <see cref="Lock"/> — специализированный тип блокировки вместо <c>object</c>).</summary>
+    private readonly Lock _lock = new();
 
     /// <summary>
     /// Конструктор объявлен <see langword="public"/> (сам класс остаётся internal):

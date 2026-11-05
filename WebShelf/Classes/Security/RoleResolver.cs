@@ -22,18 +22,7 @@ internal sealed class RoleResolver
     /// Хранится и после истечения TTL — как последнее известное значение
     /// на случай сбоя AD.
     /// </summary>
-    private sealed class CacheEntry
-    {
-        public CacheEntry(RoleResolution resolution, DateTimeOffset resolvedAtUtc)
-        {
-            Resolution = resolution;
-            ResolvedAtUtc = resolvedAtUtc;
-        }
-
-        public RoleResolution Resolution { get; }
-
-        public DateTimeOffset ResolvedAtUtc { get; }
-    }
+    private sealed record CacheEntry(RoleResolution Resolution, DateTimeOffset ResolvedAtUtc);
 
     private readonly IAdGroupSource _ad;
     private readonly RoleCacheOptions _options;
@@ -43,7 +32,7 @@ internal sealed class RoleResolver
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Сериализация промахов кэша: исключает шторм запросов к AD при массовом истечении TTL.</summary>
-    private readonly object _missLock = new();
+    private readonly Lock _missLock = new();
 
     /// <summary>Расширенные имена ролевых групп → роли. Строится один раз в конструкторе.</summary>
     private readonly Dictionary<string, AppRole>? _roleGroups;
@@ -224,8 +213,7 @@ internal sealed class RoleResolver
     /// </summary>
     internal IReadOnlyList<string> GetTrackedUsernames()
     {
-        List<string> usernames = _cache.Keys.ToList();
-        return usernames;
+        return [.. _cache.Keys];
     }
 
     /// <summary>
@@ -268,7 +256,7 @@ internal sealed class RoleResolver
         matched.Sort((left, right) => left.SeniorityIndex - right.SeniorityIndex);
         AppRole effective = matched.Count == 0 ? RoleCatalog.Guest : matched[0];
 
-        RoleResolution resolution = new RoleResolution(effective, matched, groupNames.Contains(_usersGroupName));
+        RoleResolution resolution = new(effective, matched, groupNames.Contains(_usersGroupName));
         _cache[username] = new CacheEntry(resolution, _timeProvider.GetUtcNow());
 
         return resolution;

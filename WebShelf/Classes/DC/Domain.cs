@@ -163,7 +163,14 @@ internal class Domain : IAdGroupSource
 
         string? userName = AdNames.NormalizeUserName(plainUser, domain);
         if (string.IsNullOrWhiteSpace(userName))
-            throw new ArgumentException($"Имя пользователя '{plainUser}' не удалось привести к формату username@domain.", nameof(encryptedUser));
+        {
+            // ИНФОРМАЦИОННАЯ БЕЗОПАСНОСТЬ: реальное имя сервисной учётной записи
+            // в текст исключения НЕ включается (оно могло быть расшифровано выше) —
+            // сообщение исключения попадает в логи и поверхностные UI-ошибки
+            throw new ArgumentException(
+                "Имя пользователя после расшифровки не удалось привести к формату username@domain.",
+                nameof(encryptedUser));
+        }
 
         Name = domain.Trim();
         _instanceIdShort = instanceIdShort.Trim();
@@ -264,6 +271,19 @@ internal class Domain : IAdGroupSource
     /// Параметры <paramref name="username"/> и <paramref name="password"/> передаются в открытом виде
     /// (как ввёл пользователь или как подготовлены при старте сервиса).
     /// </summary>
+    /// <param name="username">Имя пользователя в формате username@domain либо sAMAccountName
+    /// (нормализуется методом <see cref="AdNames.NormalizeUserName"/>).</param>
+    /// <param name="password">Пароль в открытом виде.</param>
+    /// <param name="checkUsersGroup">Дополнительно проверить членство в группе доступа Users
+    /// (для входа пользователей — <see langword="true"/>, для сервисной учётной записи при
+    /// самопроверке домена — <see langword="false"/>).</param>
+    /// <returns>
+    /// <see langword="true"/> — учётные данные валидны (и группа подтверждена при проверке);
+    /// <see langword="false"/> — невалидные данные, пользователь или группа не найдены.
+    /// </returns>
+    /// <exception cref="InvalidOperationException">
+    /// Контроллер домена недоступен или произошла ошибка обращения к AD.
+    /// </exception>
     internal bool ValidateAdCredentials(string username, string password, bool checkUsersGroup = true)
     {
         const string method = nameof(ValidateAdCredentials);

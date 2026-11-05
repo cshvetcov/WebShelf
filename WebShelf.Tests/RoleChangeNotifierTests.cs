@@ -13,7 +13,7 @@ public class RoleChangeNotifierTests
     [Fact]
     public void Notify_SubscribedUser_HandlerReceivesResolution()
     {
-        RoleChangeNotifier notifier = new RoleChangeNotifier();
+        RoleChangeNotifier notifier = new();
         List<RoleResolution> received = [];
 
         using (notifier.Subscribe("ivanov", received.Add))
@@ -29,7 +29,7 @@ public class RoleChangeNotifierTests
     [Fact]
     public void Notify_TwoHandlersSameUser_BothInvoked()
     {
-        RoleChangeNotifier notifier = new RoleChangeNotifier();
+        RoleChangeNotifier notifier = new();
         int firstCalls = 0;
         int secondCalls = 0;
 
@@ -46,7 +46,7 @@ public class RoleChangeNotifierTests
     [Fact]
     public void Notify_DifferentUser_HandlerNotInvoked()
     {
-        RoleChangeNotifier notifier = new RoleChangeNotifier();
+        RoleChangeNotifier notifier = new();
         int calls = 0;
 
         using (notifier.Subscribe("ivanov", _ => calls++))
@@ -60,7 +60,7 @@ public class RoleChangeNotifierTests
     [Fact]
     public void Notify_AfterDispose_HandlerNotInvoked()
     {
-        RoleChangeNotifier notifier = new RoleChangeNotifier();
+        RoleChangeNotifier notifier = new();
         int calls = 0;
 
         IDisposable subscription = notifier.Subscribe("ivanov", _ => calls++);
@@ -74,7 +74,7 @@ public class RoleChangeNotifierTests
     [Fact]
     public void Notify_UserNameIsCaseInsensitive()
     {
-        RoleChangeNotifier notifier = new RoleChangeNotifier();
+        RoleChangeNotifier notifier = new();
         int calls = 0;
 
         using (notifier.Subscribe("IVANOV", _ => calls++))
@@ -88,7 +88,7 @@ public class RoleChangeNotifierTests
     [Fact]
     public void Notify_HandlerThrows_OtherHandlersStillInvoked()
     {
-        RoleChangeNotifier notifier = new RoleChangeNotifier();
+        RoleChangeNotifier notifier = new();
         int secondCalls = 0;
 
         using (notifier.Subscribe("ivanov", _ => throw new InvalidOperationException("Сбой обработчика")))
@@ -103,7 +103,7 @@ public class RoleChangeNotifierTests
     [Fact]
     public void Subscribe_EmptyUserName_ThrowsArgumentException()
     {
-        RoleChangeNotifier notifier = new RoleChangeNotifier();
+        RoleChangeNotifier notifier = new();
 
         Assert.Throws<ArgumentException>(() => notifier.Subscribe("", _ => { }));
         Assert.Throws<ArgumentException>(() => notifier.Subscribe("  ", _ => { }));
@@ -112,7 +112,7 @@ public class RoleChangeNotifierTests
     [Fact]
     public void Subscribe_NullHandler_ThrowsArgumentNullException()
     {
-        RoleChangeNotifier notifier = new RoleChangeNotifier();
+        RoleChangeNotifier notifier = new();
 
         Assert.Throws<ArgumentNullException>(() => notifier.Subscribe("ivanov", null!));
     }
@@ -120,7 +120,7 @@ public class RoleChangeNotifierTests
     [Fact]
     public void Notify_EmptyUserOrNullResolution_IsIgnored()
     {
-        RoleChangeNotifier notifier = new RoleChangeNotifier();
+        RoleChangeNotifier notifier = new();
         int calls = 0;
 
         using (notifier.Subscribe("ivanov", _ => calls++))

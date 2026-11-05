@@ -6,6 +6,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <PlatformTarget>x64</PlatformTarget>
     <IsPackable>false</IsPackable>
+    <!-- Принудительное применение требований к коду: как в основном проекте -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- CA1707: подчёркивания в именах тестовых методов — принятый для xUnit
+         формат "Метод_Сценарий_Ожидание" (см. существующие тесты проекта);
+         переименование сотен тестов против конвенции ничего не улучшает -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
     <!-- Позволяет собирать Windows-ориентированный проект (в т.ч. в CI на Linux);
          на Windows свойство не влияет на результат сборки -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>

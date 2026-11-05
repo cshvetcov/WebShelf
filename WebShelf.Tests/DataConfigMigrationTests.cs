@@ -44,7 +44,7 @@ public class DataConfigMigrationTests
     private static (KeyStore KeyStore, CryptoEngine CryptoEngine, byte[] Key) CreateCrypto()
     {
         KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
-        CryptoEngine cryptoEngine = new CryptoEngine();
+        CryptoEngine cryptoEngine = new();
         byte[] key = keyStore.EnsureMasterKey()!;
 
         return (keyStore, cryptoEngine, key);
@@ -73,7 +73,7 @@ public class DataConfigMigrationTests
                 "scheme=http",
                 "port=38080");
 
-            Data data = new Data(keyStore, cryptoEngine, path);
+            Data data = new(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();
@@ -131,7 +131,7 @@ public class DataConfigMigrationTests
 
             byte[] before = File.ReadAllBytes(path);
 
-            Data data = new Data(keyStore, cryptoEngine, path);
+            Data data = new(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();
@@ -175,7 +175,7 @@ public class DataConfigMigrationTests
                 "scheme=http",
                 "port=38080");
 
-            Data data = new Data(keyStore, cryptoEngine, path);
+            Data data = new(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();
@@ -226,7 +226,7 @@ public class DataConfigMigrationTests
                 "scheme=http",
                 "port=38080");
 
-            Data data = new Data(keyStore, cryptoEngine, path);
+            Data data = new(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool firstResult = await data.ReadConfigAsync();
@@ -276,7 +276,7 @@ public class DataConfigMigrationTests
                 "scheme=http",
                 "port=38080");
 
-            Data data = new Data(keyStore, cryptoEngine, path);
+            Data data = new(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();
@@ -329,7 +329,7 @@ public class DataConfigMigrationTests
                 "scheme=https",
                 "port=38080");
 
-            Data data = new Data(keyStore, cryptoEngine, path);
+            Data data = new(keyStore, cryptoEngine, path);
             data.SetInstanceId("0123456789ABCDEFGHIJKLMNO");
 
             bool result = await data.ReadConfigAsync();

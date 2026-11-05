@@ -21,7 +21,7 @@ public class SecurityHeadersMiddlewareTests
     public async Task Invoke_AddsAllSecurityHeaders_AndCallsNext()
     {
         IServiceProvider services = new ServiceCollection().BuildServiceProvider();
-        IApplicationBuilder appBuilder = new ApplicationBuilder(services);
+        ApplicationBuilder appBuilder = new(services);
         appBuilder.UseWebShelfSecurityHeaders();
         RequestDelegate pipeline = appBuilder.Build();
 
@@ -44,7 +44,7 @@ public class SecurityHeadersMiddlewareTests
     public async Task Invoke_ContentSecurityPolicy_ContainsKeyDirectives()
     {
         IServiceProvider services = new ServiceCollection().BuildServiceProvider();
-        IApplicationBuilder appBuilder = new ApplicationBuilder(services);
+        ApplicationBuilder appBuilder = new(services);
         appBuilder.UseWebShelfSecurityHeaders();
         RequestDelegate pipeline = appBuilder.Build();
 
@@ -70,7 +70,7 @@ public class SecurityHeadersMiddlewareTests
     public async Task Invoke_ContentSecurityPolicy_AllowsInlineStylesAndDataImages()
     {
         IServiceProvider services = new ServiceCollection().BuildServiceProvider();
-        IApplicationBuilder appBuilder = new ApplicationBuilder(services);
+        ApplicationBuilder appBuilder = new(services);
         appBuilder.UseWebShelfSecurityHeaders();
         RequestDelegate pipeline = appBuilder.Build();
 

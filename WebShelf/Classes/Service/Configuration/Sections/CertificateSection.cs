@@ -41,13 +41,17 @@ internal static class CertificateSection
     /// <param name="certificate">Выходной параметр: загруженный сертификат
     /// либо <see langword="null"/> (не требуется или ошибка).</param>
     /// <returns><see langword="true"/>, если сертификат загружен или не требуется; иначе <see langword="false"/>.</returns>
+    /// <param name="timeProvider">Источник текущего времени (UTC) для предупреждений
+    /// о сроке действия сертификата; не задан — <see cref="TimeProvider.System"/>
+    /// (секция вызывается до сборки DI-контейнера, поэтому внедрение — через параметр).</param>
     internal static bool TryInitCertificate(
         Dictionary<string, string> config,
         string? scheme,
         SecureCredentialsWriter credentialsWriter,
         KeyStore keyStore,
         CryptoEngine cryptoEngine,
-        out X509Certificate2? certificate)
+        out X509Certificate2? certificate,
+        TimeProvider? timeProvider = null)
     {
         const string method = nameof(TryInitCertificate);
 
@@ -55,6 +59,8 @@ internal static class CertificateSection
         ArgumentNullException.ThrowIfNull(cryptoEngine);
 
         certificate = null;
+
+        TimeProvider clock = timeProvider ?? TimeProvider.System;
 
         try
         {
@@ -98,16 +104,20 @@ internal static class CertificateSection
 
             string? password = null;
 
-            bool hasSecurePass = config.TryGetValue("scertpass", out string? sPass) &&
-                                 !string.IsNullOrWhiteSpace(sPass);
-            bool hasPlainPass = config.TryGetValue("certpass", out string? pPass) &&
-                                !string.IsNullOrWhiteSpace(pPass);
+            string? securePass = config.TryGetValue("scertpass", out string? sPass) &&
+                                 !string.IsNullOrWhiteSpace(sPass)
+                ? sPass
+                : null;
+            string? plainPass = config.TryGetValue("certpass", out string? pPass) &&
+                                !string.IsNullOrWhiteSpace(pPass)
+                ? pPass
+                : null;
 
-            if (hasSecurePass)
+            if (securePass is not null)
             {
                 try
                 {
-                    password = cryptoEngine.Decrypt(sPass!.Trim(), masterKey);
+                    password = cryptoEngine.Decrypt(securePass.Trim(), masterKey);
                 }
                 catch (Exception ex)
                 {
@@ -119,9 +129,9 @@ internal static class CertificateSection
 
                 // Остаточный открытый certpass подлежит очистке: секреты
                 // не должны оставаться в конфигурации в незашифрованном виде
-                if (hasPlainPass)
+                if (plainPass is not null)
                 {
-                    if (credentialsWriter.WriteSecureCredentials(SecureCredentialsWriter.TlsCredentialKeys, null, sPass!.Trim()))
+                    if (credentialsWriter.WriteSecureCredentials(SecureCredentialsWriter.TlsCredentialKeys, null, securePass.Trim()))
                     {
                         Log.Information(
                             "Остаточный открытый certpass очищен в конфигурации. Class={Class}, Method={Method}",
@@ -135,9 +145,9 @@ internal static class CertificateSection
                     }
                 }
             }
-            else if (hasPlainPass)
+            else if (plainPass is not null)
             {
-                password = pPass!.Trim();
+                password = plainPass.Trim();
 
                 try
                 {
@@ -189,13 +199,13 @@ internal static class CertificateSection
             }
 
             // Предупреждение о сроке действия не блокирует запуск
-            if (loadedCertificate.NotAfter < DateTimeOffset.UtcNow)
+            if (loadedCertificate.NotAfter < clock.GetUtcNow())
             {
                 Log.Warning(
                     "Срок действия TLS-сертификата истёк. NotAfter={NotAfter}. Class={Class}, Method={Method}",
                     loadedCertificate.NotAfter, ClassName, method);
             }
-            else if (loadedCertificate.NotAfter < DateTimeOffset.UtcNow.AddDays(14))
+            else if (loadedCertificate.NotAfter < clock.GetUtcNow().AddDays(14))
             {
                 Log.Warning(
                     "Срок действия TLS-сертификата истекает менее чем через 14 дней. NotAfter={NotAfter}. Class={Class}, Method={Method}",

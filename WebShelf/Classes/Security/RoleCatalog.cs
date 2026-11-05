@@ -97,7 +97,7 @@ internal static class RoleCatalog
     /// </summary>
     /// <returns>Массив шаблонов вида <c>WebShelf-{InstanceIdShort}-Administrator</c>.</returns>
     internal static string[] BuildGroupNameTemplates() =>
-        AdRoles.Select(role => $"WebShelf-{AdNames.InstanceIdShortPlaceholder}-{role.GroupSuffix}").ToArray();
+        [.. AdRoles.Select(role => $"WebShelf-{AdNames.InstanceIdShortPlaceholder}-{role.GroupSuffix}")];
 
     /// <summary>
     /// Строит фактическое имя AD-группы указанной роли для заданного экземпляра.
@@ -161,10 +161,12 @@ internal static class RoleCatalog
     {
         ArgumentNullException.ThrowIfNull(roles);
 
-        List<AppRole> matchedRoles = roles
-            .Distinct()
-            .OrderBy(role => role.SeniorityIndex)
-            .ToList();
+        List<AppRole> matchedRoles =
+        [
+            .. roles
+                .Distinct()
+                .OrderBy(role => role.SeniorityIndex)
+        ];
 
         AppRole effectiveRole = matchedRoles.Count > 0 ? matchedRoles[0] : Guest;
 

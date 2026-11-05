@@ -70,8 +70,8 @@ public class RoleCatalogTests
             Assert.Contains(AdNames.InstanceIdShortPlaceholder, template));
 
         // Группа доступа Users и роль Гость в шаблоны ролевых групп не входят
-        Assert.DoesNotContain(templates, template => template.EndsWith("-Users"));
-        Assert.DoesNotContain(templates, template => template.EndsWith("-Guest"));
+        Assert.DoesNotContain(templates, template => template.EndsWith("-Users", StringComparison.Ordinal));
+        Assert.DoesNotContain(templates, template => template.EndsWith("-Guest", StringComparison.Ordinal));
 
         // Шаблоны формируются в порядке старшинства ролей
         Assert.Equal($"WebShelf-{AdNames.InstanceIdShortPlaceholder}-Administrator", templates[0]);

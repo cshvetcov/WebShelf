@@ -2,7 +2,7 @@
     AppWindow — переиспользуемая оболочка окна WebShelf.
     Обеспечивает заголовок, перетаскивание, кнопку закрытия и область содержимого.
     Стили: wwwroot/css/window.css
-    Скрипт: wwwroot/js/window.js
+    Скрипт: Components/Shared/AppWindow.razor.js (JS-isolation, ES-модуль)
 *@
 
 @implements IAsyncDisposable
@@ -88,12 +88,19 @@
     private string WindowElementId { get; } = "ws-window-" + Guid.NewGuid().ToString("N")[..8];
 
     /// <summary>
-    /// true только после успешного вызова WebShelfWindow.init (интерактивный режим).
+    /// true только после успешного вызова init модуля (интерактивный режим).
     /// </summary>
     private bool _jsInitialized;
 
     /// <summary>
-    /// После рендера инициализирует JS. При статическом prerender interop недоступен — пропускаем.
+    /// Ссылка на ES-модуль AppWindow.razor.js (JS-isolation):
+    /// импортируется один раз за цепочку, функции вызываются через него.
+    /// </summary>
+    private IJSObjectReference? _module;
+
+    /// <summary>
+    /// После рендера импортирует JS-модуль и инициализирует окно.
+    /// При статическом prerender interop недоступен — пропускаем.
     /// </summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -102,13 +109,17 @@
             if (!firstRender || _jsInitialized)
                 return;
 
-            // JS interop доступен только в интерактивном режиме (не при static prerender).
+            // JS interop доступен только в интерактивном режиме (не при static prerander).
+            // ES-модуль по одному URL вычисляется браузером один раз — реестр окон
+            // общий для всех экземпляров AppWindow на странице.
+            _module = await Js.InvokeAsync<IJSObjectReference>("import", "./Components/Shared/AppWindow.razor.js");
+
             if (ApplyPageBackground)
             {
-                await Js.InvokeVoidAsync("WebShelfWindow.setPageBackground", true);
+                await _module.InvokeVoidAsync("setPageBackground", true);
             }
 
-            await Js.InvokeVoidAsync("WebShelfWindow.init", WindowElementId, new
+            await _module.InvokeVoidAsync("init", WindowElementId, new
             {
                 canClose = CanClose,
                 closeBubbleText = CloseBubbleText,
@@ -132,25 +143,26 @@
     }
 
     /// <summary>
-    /// Освобождает JS-ресурсы только если init реально выполнялся (интерактивный режим).
+    /// Освобождает JS-ресурсы (обработчики окна и ссылку на модуль).
     /// При dispose prerender-экземпляра interop недоступен — выходим без вызовов.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        // Пока JS не инициализирован (prerender / static) — ничего не вызываем.
-        if (!_jsInitialized)
+        // Модуль не импортирован (prerender / static) — освобождать нечего.
+        if (_module is null)
             return;
 
         try
         {
-            await Js.InvokeVoidAsync("WebShelfWindow.dispose", WindowElementId);
-
-            if (ApplyPageBackground)
+            if (_jsInitialized)
             {
-                await Js.InvokeVoidAsync("WebShelfWindow.setPageBackground", false);
-            }
+                await _module.InvokeVoidAsync("dispose", WindowElementId);
 
-            _jsInitialized = false;
+                if (ApplyPageBackground)
+                {
+                    await _module.InvokeVoidAsync("setPageBackground", false);
+                }
+            }
         }
         catch (JSDisconnectedException)
         {
@@ -163,6 +175,22 @@
         catch (Exception ex)
         {
             Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(DisposeAsync));
+        }
+        finally
+        {
+            try
+            {
+                await _module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            _module = null;
+            _jsInitialized = false;
         }
     }
 }

@@ -1,6 +1,7 @@
 ﻿@page "/"
 @rendermode InteractiveServer
 @attribute [Authorize]
+@implements IAsyncDisposable
 
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Components.Authorization
@@ -32,6 +33,12 @@
     private bool _pageBgApplied;
 
     /// <summary>
+    /// ES-модуль RibbonMenu.razor.js (JS-isolation): импортируется один раз
+    /// за цепочку для применения фона страницы ленты.
+    /// </summary>
+    private IJSObjectReference? _ribbonModule;
+
+    /// <summary>
     /// Если пользователь не авторизован — редирект на Entry.
     /// Страница также защищена атрибутом [Authorize]: неаутентифицированный
     /// запрос документа отклоняется на уровне endpoint (302 на /entry?ReturnUrl=...)
@@ -57,7 +64,8 @@
     }
 
     /// <summary>
-    /// Применяет фон страницы для ленты после рендера.
+    /// Применяет фон страницы для ленты после рендера: импортирует модуль ленты
+    /// (JS-isolation) и вызывает setPageBackground.
     /// </summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -68,7 +76,8 @@
                 return;
             }
 
-            await Js.InvokeVoidAsync("WebShelfRibbon.setPageBackground", true);
+            _ribbonModule = await Js.InvokeAsync<IJSObjectReference>("import", "./Components/Shared/RibbonMenu.razor.js");
+            await _ribbonModule.InvokeVoidAsync("setPageBackground", true);
             _pageBgApplied = true;
         }
         catch (JSDisconnectedException)
@@ -80,6 +89,28 @@
         catch (Exception ex)
         {
             Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
+        }
+    }
+
+    /// <summary>
+    /// Освобождает ссылку на импортированный JS-модуль ленты.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (_ribbonModule is not null)
+        {
+            try
+            {
+                await _ribbonModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            _ribbonModule = null;
         }
     }
 

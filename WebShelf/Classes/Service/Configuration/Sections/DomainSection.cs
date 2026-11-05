@@ -107,16 +107,20 @@ internal static class DomainSection
             string plainUser;
             string plainPass;
 
-            bool hasSecureUser = config.TryGetValue("sdomainuser", out string? sUser) &&
-                                 !string.IsNullOrWhiteSpace(sUser);
-            bool hasSecurePass = config.TryGetValue("sdomainpass", out string? sPass) &&
-                                 !string.IsNullOrWhiteSpace(sPass);
+            string? secureUser = config.TryGetValue("sdomainuser", out string? sUser) &&
+                                 !string.IsNullOrWhiteSpace(sUser)
+                ? sUser
+                : null;
+            string? securePass = config.TryGetValue("sdomainpass", out string? sPass) &&
+                                 !string.IsNullOrWhiteSpace(sPass)
+                ? sPass
+                : null;
 
-            if (hasSecureUser && hasSecurePass)
+            if (secureUser is not null && securePass is not null)
             {
                 // Уже зашифрованные значения — используем их
-                encryptedUser = sUser!.Trim();
-                encryptedPass = sPass!.Trim();
+                encryptedUser = secureUser.Trim();
+                encryptedPass = securePass.Trim();
 
                 try
                 {

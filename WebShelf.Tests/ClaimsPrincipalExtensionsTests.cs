@@ -66,7 +66,7 @@ public class ClaimsPrincipalExtensionsTests
     [Fact]
     public void GetAppRole_AnonymousUser_ReturnsNull()
     {
-        ClaimsPrincipal anonymous = new ClaimsPrincipal(new ClaimsIdentity());
+        ClaimsPrincipal anonymous = new(new ClaimsIdentity());
 
         Assert.Null(anonymous.GetAppRole());
     }

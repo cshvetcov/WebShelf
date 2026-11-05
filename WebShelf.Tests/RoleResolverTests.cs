@@ -48,7 +48,7 @@ public class RoleResolverTests
         Assert.Same(RoleCatalog.Manager, result.EffectiveRole);
         Assert.Equal(
             ["Manager", "GIP", "Executor"],
-            result.MatchedRoles.Select(role => role.SystemName).ToArray());
+            [.. result.MatchedRoles.Select(role => role.SystemName)]);
     }
 
     /// <summary>

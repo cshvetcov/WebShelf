@@ -25,8 +25,9 @@
 <body>
     <Routes />
     <ReconnectModal />
-    <script src="@Assets["js/window.js"]"></script>
-    <script src="@Assets["js/ribbon.js"]"></script>
+    @* window.js и ribbon.js переведены на JS-isolation (ES-модули,
+       колокация с компонентами: AppWindow.razor.js, RibbonMenu.razor.js) —
+       глобальные скрипты не нужны *@
     <script src="@Assets["_framework/blazor.web.js"]"></script>
 </body>
 

@@ -2,7 +2,7 @@
   RibbonMenu — основное ленточное меню приложения WebShelf.
   Визуальный каркас по образцу классической ленты; функционал кнопок не подключён.
   Стили: wwwroot/css/ribbon.css
-  Скрипт: wwwroot/js/ribbon.js
+  Скрипт: Components/Shared/RibbonMenu.razor.js (JS-isolation, ES-модуль)
 *@
 @implements IAsyncDisposable
 @using Serilog
@@ -214,13 +214,19 @@
     private string RibbonElementId { get; } = "ws-ribbon-" + Guid.NewGuid().ToString("N")[..8];
 
     /// <summary>
-    /// true после успешного вызова WebShelfRibbon.init.
+    /// true после успешного вызова init модуля.
     /// </summary>
     private bool _jsInitialized;
 
     /// <summary>
+    /// Ссылка на ES-модуль RibbonMenu.razor.js (JS-isolation):
+    /// импортируется один раз за цепочку, функции вызываются через него.
+    /// </summary>
+    private IJSObjectReference? _module;
+
+    /// <summary>
     /// Выход через fetch POST /account/logout с antiforgery-токеном
-    /// (реализация — WebShelfRibbon.logout в ribbon.js): сервер сбрасывает cookie,
+    /// (реализация — logout в RibbonMenu.razor.js): сервер сбрасывает cookie,
     /// затем браузер переходит на /entry. GET-эндпоинт выхода на сервере отключён
     /// (защита от logout-CSRF), поэтому fallback-перехода по GET нет:
     /// без JS interop выход невозможен (приложение целиком требует JS).
@@ -229,7 +235,14 @@
     {
         try
         {
-            await Js.InvokeVoidAsync("WebShelfRibbon.logout");
+            if (_module is not null)
+            {
+                await _module.InvokeVoidAsync("logout");
+            }
+            else
+            {
+                Log.Error("JS-модуль ленты не импортирован при выходе. Class={Class}, Method={Method}", ClassName, nameof(LogoutAsync));
+            }
         }
         catch (JSDisconnectedException)
         {
@@ -247,7 +260,8 @@
     }
 
     /// <summary>
-    /// После первого интерактивного рендера инициализирует переключение вкладок.
+    /// После первого интерактивного рендера импортирует JS-модуль
+    /// и инициализирует переключение вкладок.
     /// </summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -258,7 +272,8 @@
                 return;
             }
 
-            await Js.InvokeVoidAsync("WebShelfRibbon.init", RibbonElementId);
+            _module = await Js.InvokeAsync<IJSObjectReference>("import", "./Components/Shared/RibbonMenu.razor.js");
+            await _module.InvokeVoidAsync("init", RibbonElementId);
             _jsInitialized = true;
         }
         catch (JSDisconnectedException)
@@ -276,19 +291,21 @@
     }
 
     /// <summary>
-    /// Освобождает JS-ресурсы ленты.
+    /// Освобождает JS-ресурсы ленты (обработчики и ссылку на модуль).
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (!_jsInitialized)
+        if (_module is null)
         {
             return;
         }
 
         try
         {
-            await Js.InvokeVoidAsync("WebShelfRibbon.dispose", RibbonElementId);
-            _jsInitialized = false;
+            if (_jsInitialized)
+            {
+                await _module.InvokeVoidAsync("dispose", RibbonElementId);
+            }
         }
         catch (JSDisconnectedException)
         {
@@ -301,6 +318,22 @@
         catch (Exception ex)
         {
             Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(DisposeAsync));
+        }
+        finally
+        {
+            try
+            {
+                await _module.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            _module = null;
+            _jsInitialized = false;
         }
     }
 }

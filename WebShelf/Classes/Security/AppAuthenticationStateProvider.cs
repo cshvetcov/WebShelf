@@ -15,16 +15,20 @@ namespace WebShelf.Classes.Security;
 /// Подписка на события ведётся по имени учётной записи своей цепочки
 /// и снимается при её закрытии (<see cref="Dispose"/>).
 /// </summary>
-internal sealed class AppAuthenticationStateProvider :
+/// <remarks>
+/// Конструктор (первичный) синтезируется <see langword="public"/> — контейнер DI
+/// активирует сервисы только через public-конструктор, при этом сам класс
+/// остаётся <see langword="internal"/> и наружу сборки не виден.
+/// </remarks>
+internal sealed class AppAuthenticationStateProvider(
+    RoleResolver resolver,
+    RoleChangeNotifier notifier,
+    IHttpContextAccessor httpContextAccessor) :
     AuthenticationStateProvider,
     IHostEnvironmentAuthenticationStateProvider,
     IDisposable
 {
     private const string ClassName = "WebShelf.Classes.Security.AppAuthenticationStateProvider";
-
-    private readonly RoleResolver _resolver;
-    private readonly RoleChangeNotifier _notifier;
-    private readonly IHttpContextAccessor _httpContextAccessor;
 
     /// <summary>Личность из cookie, посеянная каркасом (SSR-запрос или старт цепочки).</summary>
     private Task<AuthenticationState>? _seeded;
@@ -34,20 +38,6 @@ internal sealed class AppAuthenticationStateProvider :
 
     /// <summary>Подписка на события смены роли пользователя цепочки; null до построения состояния.</summary>
     private IDisposable? _subscription;
-
-    /// <summary>
-    /// Конструктор объявлен <see langword="public"/> (сам класс остаётся internal):
-    /// контейнер DI находит только public-конструкторы.
-    /// </summary>
-    public AppAuthenticationStateProvider(
-        RoleResolver roleResolver,
-        RoleChangeNotifier changeNotifier,
-        IHttpContextAccessor httpContextAccessor)
-    {
-        _resolver = roleResolver;
-        _notifier = changeNotifier;
-        _httpContextAccessor = httpContextAccessor;
-    }
 
     /// <summary>
     /// Каркас (SSR-рендер / старт цепочки) передаёт состояние аутентификации из cookie.
@@ -109,7 +99,7 @@ internal sealed class AppAuthenticationStateProvider :
             {
                 // Посев не пришёл (обращение вне цепочки) — страховка: HttpContext текущего
                 // запроса. В .NET 10 IHttpContextAccessor доступен и в цепочках (см. Entry.razor)
-                HttpContext? http = _httpContextAccessor.HttpContext;
+                HttpContext? http = httpContextAccessor.HttpContext;
                 if (http?.User.Identity?.IsAuthenticated == true)
                 {
                     seedTask = Task.FromResult(new AuthenticationState(http.User));
@@ -142,10 +132,10 @@ internal sealed class AppAuthenticationStateProvider :
             // Подписка ставится один раз и снимается при закрытии цепочки (Dispose)
             if (_subscription is null)
             {
-                _subscription = _notifier.Subscribe(username, OnRoleChanged);
+                _subscription = notifier.Subscribe(username, OnRoleChanged);
             }
 
-            RoleResolution? resolution = _resolver.Resolve(username);
+            RoleResolution? resolution = resolver.Resolve(username);
             if (resolution is null)
             {
                 // AD недоступен и кэша нет: остаёмся на клеймах cookie (роль на момент входа)
@@ -192,8 +182,9 @@ internal sealed class AppAuthenticationStateProvider :
                 // Принудительный выход: потеряна группа Users. Cookie остаётся
                 // валидным до своего срока, но интерактивные страницы считают
                 // пользователя вышедшим (провайдер возвращает анонимное состояние)
-                _current = Task.FromResult(CreateAnonymousState());
-                NotifyAuthenticationStateChanged(_current!);
+                Task<AuthenticationState> anonymous = Task.FromResult(CreateAnonymousState());
+                _current = anonymous;
+                NotifyAuthenticationStateChanged(anonymous);
 
                 Log.Warning(
                     "Принудительный выход из цепочки: пользователь исключён из группы Users. Username={User}. Class={Class}, Method={Method}",
@@ -208,12 +199,25 @@ internal sealed class AppAuthenticationStateProvider :
                 return;
             }
 
-            AuthenticationState state = current.GetAwaiter().GetResult();
+            // Задача уже завершена (проверка выше): забираем результат без
+            // блокирующего ожидания. Faulted/отменённая задача игнорируется —
+            // состояние пересоберёт ближайший GetAuthenticationStateAsync
+            if (current is not { Status: TaskStatus.RanToCompletion, Result: AuthenticationState completedState })
+            {
+                Log.Warning(
+                    "Предыдущая задача состояния не завершена успешно — обновление роли пропущено. Class={Class}, Method={Method}",
+                    ClassName, method);
+                return;
+            }
+
+            AuthenticationState state = completedState;
 
             // Смена роли: пересобираем клеймы и уведомляем Blazor —
             // AuthorizeView и лента перерисовываются без перезагрузки страницы
-            _current = Task.FromResult(new AuthenticationState(RebuildPrincipal(state.User, resolution)));
-            NotifyAuthenticationStateChanged(_current!);
+            Task<AuthenticationState> updated =
+                Task.FromResult(new AuthenticationState(RebuildPrincipal(state.User, resolution)));
+            _current = updated;
+            NotifyAuthenticationStateChanged(updated);
 
             Log.Information(
                 "Роль обновлена в цепочке. OldRole={Old}, NewRole={New}. Username={User}. Class={Class}, Method={Method}",
@@ -233,9 +237,11 @@ internal sealed class AppAuthenticationStateProvider :
     /// </summary>
     private static ClaimsPrincipal RebuildPrincipal(ClaimsPrincipal seedUser, RoleResolution resolution)
     {
-        List<Claim> claims = seedUser.Claims
-            .Where(claim => claim.Type != ClaimTypes.Role && claim.Type != ClaimsPrincipalExtensions.MatchedRolesClaimType)
-            .ToList();
+        List<Claim> claims =
+        [
+            .. seedUser.Claims
+                .Where(claim => claim.Type is not (ClaimTypes.Role or ClaimsPrincipalExtensions.MatchedRolesClaimType))
+        ];
 
         claims.Add(new Claim(ClaimTypes.Role, resolution.EffectiveRole.SystemName));
 

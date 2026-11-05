@@ -39,15 +39,28 @@ internal static class AccountEndpoints
     /// После валидации учётных данных вычисляется роль: свежая LDAP-проверка в обход
     /// кэша (вариант 3) — клейм роли в cookie является только транспортом на момент входа.
     /// </summary>
+    /// <param name="context">Контекст текущего HTTP-запроса.</param>
+    /// <param name="antiforgery">Сервис проверки antiforgery-токенов.</param>
+    /// <param name="loginGuard">Защита от перебора паролей.</param>
+    /// <param name="roleResolver">Вычислитель роли пользователя по группам AD.</param>
+    /// <param name="data">Хранилище системных данных (инициализированный домен).</param>
+    /// <param name="timeProvider">Источник текущего времени (UTC) для срока жизни
+    /// cookie: 14 календарных дней при «Запомнить меня», иначе 8 часов.
+    /// Не задан (прямой вызов в тестах) — <see cref="TimeProvider.System"/>;
+    /// при обработке HTTP-запроса внедряется из DI.</param>
+    /// <returns>Результат: редирект на форму входа, исходную страницу либо страницу с ошибкой.</returns>
     internal static async Task<IResult> LoginAsync(
         HttpContext context,
         IAntiforgery antiforgery,
         LoginGuard loginGuard,
         RoleResolver roleResolver,
-        Data data)
+        Data data,
+        TimeProvider? timeProvider = null)
     {
         const string className = "WebShelf.Classes.Security.AccountEndpoints";
         const string method = nameof(LoginAsync);
+
+        TimeProvider clock = timeProvider ?? TimeProvider.System;
 
         try
         {
@@ -135,14 +148,14 @@ internal static class AccountEndpoints
                 return Results.Redirect("/entry?error=server");
             }
 
-            List<Claim> claims = new List<Claim>
-            {
+            List<Claim> claims =
+            [
                 new(ClaimTypes.Name, samAccountName),
                 new(ClaimTypes.NameIdentifier, samAccountName),
                 // Эффективная роль — транспорт в cookie на момент входа;
                 // источник истины всегда AD (резолвер обновляет роль в цепочке)
                 new(ClaimTypes.Role, roleState.EffectiveRole.SystemName)
-            };
+            ];
 
             if (roleState.MatchedRoles.Count > 0)
             {
@@ -152,15 +165,15 @@ internal static class AccountEndpoints
                     string.Join(",", roleState.MatchedRoles.Select(role => role.SystemName))));
             }
 
-            ClaimsIdentity identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-            ClaimsPrincipal principal = new ClaimsPrincipal(identity);
+            ClaimsIdentity identity = new(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+            ClaimsPrincipal principal = new(identity);
 
-            AuthenticationProperties props = new AuthenticationProperties
+            AuthenticationProperties props = new()
             {
                 IsPersistent = rememberMe,
                 ExpiresUtc = rememberMe
-                    ? DateTimeOffset.UtcNow.AddDays(14)
-                    : DateTimeOffset.UtcNow.AddHours(8)
+                    ? clock.GetUtcNow().AddDays(14)
+                    : clock.GetUtcNow().AddHours(8)
             };
 
             await context.SignInAsync(
@@ -214,6 +227,12 @@ internal static class AccountEndpoints
     /// Выход выполняется только POST-запросом с валидным antiforgery-током —
     /// защита от logout-CSRF (автоматический GET-запрос со стороннего сайта).
     /// </summary>
+    /// <param name="context">Контекст текущего HTTP-запроса.</param>
+    /// <param name="antiforgery">Сервис проверки antiforgery-токенов.</param>
+    /// <returns>
+    /// 204 для fetch-запроса (клиент сам переходит на /entry),
+    /// иначе редирект на форму входа; 400 — неверный antiforgery-токен.
+    /// </returns>
     internal static async Task<IResult> LogoutAsync(
         HttpContext context,
         IAntiforgery antiforgery)

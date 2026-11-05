@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="WebShelf/WebShelf.csproj" />
+  <Project Path="WebShelf.Tests/WebShelf.Tests.csproj" />
 </Solution>

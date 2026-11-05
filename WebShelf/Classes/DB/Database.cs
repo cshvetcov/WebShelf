@@ -107,7 +107,7 @@ internal sealed class Database : IAsyncDisposable, IDisposable
         if (string.IsNullOrWhiteSpace(host))
             throw new ArgumentException("Хост базы данных не может быть пустым.", nameof(host));
 
-        if (port < 1 || port > 65535)
+        if (port is < 1 or > 65535)
             throw new ArgumentException("Порт базы данных должен быть в диапазоне 1–65535.", nameof(port));
 
         if (string.IsNullOrWhiteSpace(databaseName))
@@ -125,9 +125,8 @@ internal sealed class Database : IAsyncDisposable, IDisposable
         SslMode = sslMode;
 
         // Мастер-ключ запрашивается один раз: обе расшифровки идут из одного ключа
-        byte[]? masterKey = _keyStore.EnsureMasterKey();
-        if (masterKey is null)
-            throw new InvalidOperationException("Мастер-ключ недоступен для расшифровки учётных данных БД.");
+        byte[] masterKey = _keyStore.EnsureMasterKey()
+            ?? throw new InvalidOperationException("Мастер-ключ недоступен для расшифровки учётных данных БД.");
 
         string plainUser = _cryptoEngine.Decrypt(encryptedUser.Trim(), masterKey);
         string plainPass = _cryptoEngine.Decrypt(encryptedPassword.Trim(), masterKey);

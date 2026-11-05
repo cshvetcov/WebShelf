@@ -276,12 +276,6 @@ body.ws-window-page {
     color: #FFB0B0;
 }
 
-.ws-message-success {
-    background: rgba(30, 120, 80, 0.25);
-    border: 1px solid rgba(60, 180, 120, 0.4);
-    color: #A0E8C0;
-}
-
 /* Сообщение о временной блокировке входа (brute-force) */
 .ws-message-lockout {
     background: rgba(180, 120, 20, 0.28);

@@ -103,13 +103,13 @@ public class DomainTests
     public void Constructor_WithFakeKeyStore_ValidCredentials_BuildsDomain()
     {
         KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
-        CryptoEngine cryptoEngine = new CryptoEngine();
+        CryptoEngine cryptoEngine = new();
         byte[] key = keyStore.EnsureMasterKey()!;
 
         string encryptedUser = cryptoEngine.Encrypt("svc_webshelf", key);
         string encryptedPassword = cryptoEngine.Encrypt("TestPassword123!", key);
 
-        Domain domain = new Domain("company.local", "abcdef012345", encryptedUser, encryptedPassword, keyStore, cryptoEngine);
+        Domain domain = new("company.local", "abcdef012345", encryptedUser, encryptedPassword, keyStore, cryptoEngine);
 
         Assert.Equal("company.local", domain.Name);
         Assert.Equal("LDAP://company.local/DC=company,DC=local", domain.Path);

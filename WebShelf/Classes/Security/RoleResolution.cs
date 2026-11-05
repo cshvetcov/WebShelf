@@ -68,7 +68,7 @@ internal sealed class RoleResolution : IEquatable<RoleResolution>
     /// </summary>
     public override int GetHashCode()
     {
-        HashCode hash = new HashCode();
+        HashCode hash = new();
         hash.Add(EffectiveRole.Id);
         foreach (AppRole role in MatchedRoles)
         {

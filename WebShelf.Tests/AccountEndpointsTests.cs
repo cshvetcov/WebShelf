@@ -68,6 +68,7 @@ public class AccountEndpointsTests : IDisposable
     public void Dispose()
     {
         _guard.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>
@@ -104,7 +105,7 @@ public class AccountEndpointsTests : IDisposable
     {
         DefaultHttpContext context = CreateContext(clientIp);
 
-        Dictionary<string, StringValues> form = new();
+        Dictionary<string, StringValues> form = [];
         if (username is not null)
         {
             form["username"] = username;
@@ -320,13 +321,13 @@ public class AccountEndpointsTests : IDisposable
     public async Task LoginAsync_AdUnavailable_RedirectsToEntryServer()
     {
         KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
-        CryptoEngine cryptoEngine = new CryptoEngine();
+        CryptoEngine cryptoEngine = new();
         byte[] key = keyStore.EnsureMasterKey()!;
 
         string encryptedUser = cryptoEngine.Encrypt("svc_webshelf", key);
         string encryptedPassword = cryptoEngine.Encrypt("TestPassword123!", key);
 
-        Domain domain = new Domain("ws.invalid", "000000000000", encryptedUser, encryptedPassword, keyStore, cryptoEngine);
+        Domain domain = new("ws.invalid", "000000000000", encryptedUser, encryptedPassword, keyStore, cryptoEngine);
         Data data = Data.CreateWithDomain(domain, keyStore, cryptoEngine);
 
         DefaultHttpContext context = CreateLoginContext(username: "ivanov", password: "WrongPassword123!");

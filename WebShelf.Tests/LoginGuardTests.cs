@@ -11,12 +11,13 @@ namespace WebShelf.Tests;
 public class LoginGuardTests : IDisposable
 {
     /// <summary>Тестируемый экземпляр защиты.</summary>
-    private readonly LoginGuard _guard = new LoginGuard();
+    private readonly LoginGuard _guard = new();
 
     /// <inheritdoc />
     public void Dispose()
     {
         _guard.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>Фиксирует указанное число неудачных попыток и возвращает результат последней.</summary>

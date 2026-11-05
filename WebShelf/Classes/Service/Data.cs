@@ -298,11 +298,11 @@ internal sealed class Data
             // экземпляры, Data присваивает их своим свойствам в прежнем порядке
             // и агрегирует признаки успеха; инициализаторы секций не мутируют
             // состояние Data.
-            Domain = DomainSection.TryInitDomain(config, InstanceIdShort, CredentialsWriter, _keyStore, _cryptoEngine);
-            bool domainOk = Domain is not null;
+            Domain? domain = DomainSection.TryInitDomain(config, InstanceIdShort, CredentialsWriter, _keyStore, _cryptoEngine);
+            Domain = domain;
 
-            Database = await DatabaseSection.TryInitDatabaseAsync(config, CredentialsWriter, _keyStore, _cryptoEngine).ConfigureAwait(false);
-            bool databaseOk = Database is not null;
+            Database? database = await DatabaseSection.TryInitDatabaseAsync(config, CredentialsWriter, _keyStore, _cryptoEngine).ConfigureAwait(false);
+            Database = database;
 
             bool portOk = TryInitPort(config);
             bool schemeOk = TryInitScheme(config);
@@ -315,17 +315,17 @@ internal sealed class Data
                 config, Scheme, CredentialsWriter, _keyStore, _cryptoEngine, out X509Certificate2? certificate);
             TlsCertificate = certificate;
 
-            if (!domainOk || !databaseOk || !portOk || !schemeOk || !roleCacheOk || !certificateOk)
+            if (domain is null || database is null || !portOk || !schemeOk || !roleCacheOk || !certificateOk)
             {
                 Log.Error(
                     "Конфигурация загружена частично. DomainOk={DomainOk}, DatabaseOk={DatabaseOk}, PortOk={PortOk}, SchemeOk={SchemeOk}, RoleCacheOk={RoleCacheOk}, CertificateOk={CertificateOk}. Class={Class}, Method={Method}",
-                    domainOk, databaseOk, portOk, schemeOk, roleCacheOk, certificateOk, ClassName, method);
+                    domain is not null, database is not null, portOk, schemeOk, roleCacheOk, certificateOk, ClassName, method);
                 return false;
             }
 
             Log.Information(
                 "Конфигурация успешно загружена. Domain={Domain}, Database={Database}, InstanceShort={InstanceShort}, Scheme={Scheme}, Port={Port}. Class={Class}, Method={Method}",
-                Domain!.Name, Database!.DatabaseName, InstanceIdShort, Scheme, Port, ClassName, method);
+                domain.Name, database.DatabaseName, InstanceIdShort, Scheme, Port, ClassName, method);
 
             return true;
         }

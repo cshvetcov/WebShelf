@@ -111,13 +111,13 @@ public class DatabaseTests
     public async Task Constructor_WithFakeKeyStore_ValidParameters_InitializesConnectionSource()
     {
         KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
-        CryptoEngine cryptoEngine = new CryptoEngine();
+        CryptoEngine cryptoEngine = new();
         byte[] key = keyStore.EnsureMasterKey()!;
 
         string encryptedUser = cryptoEngine.Encrypt("db_webshelf", key);
         string encryptedPass = cryptoEngine.Encrypt("TestPassword123!", key);
 
-        await using Database database = new Database(
+        await using Database database = new(
             "localhost", 5432, "webshelf_test", SslMode.Prefer, encryptedUser, encryptedPass, keyStore, cryptoEngine);
 
         Assert.Equal("localhost", database.Host);
@@ -135,13 +135,13 @@ public class DatabaseTests
     public void Dispose_CalledTwice_IsIdempotent()
     {
         KeyStore keyStore = new CryptoTestFakes.FakeKeyStore();
-        CryptoEngine cryptoEngine = new CryptoEngine();
+        CryptoEngine cryptoEngine = new();
         byte[] key = keyStore.EnsureMasterKey()!;
 
         string encryptedUser = cryptoEngine.Encrypt("db_webshelf", key);
         string encryptedPass = cryptoEngine.Encrypt("TestPassword123!", key);
 
-        Database database = new Database(
+        Database database = new(
             "localhost", 5432, "webshelf_test", SslMode.Prefer, encryptedUser, encryptedPass, keyStore, cryptoEngine);
 
         database.Dispose();
