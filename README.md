@@ -156,8 +156,10 @@ InstanceId фиксирован (`WebShelf-000000000000-*`) — удобно д�
 dotnet test WebShelf.Tests/WebShelf.Tests.csproj
 ```
 
-Покрываются: криптографическое ядро (`EncryptionService`: циклы, целостность,
-валидация) и фасад делегатов, хранилище ключей (`KeyStore`: создание ключей,
+Покрываются: криптографический движок (`CryptoEngine`: циклы всех 8 перегрузок,
+целостность, порядок проверок «MAC до AES», эталонная константа замороженного
+формата, валидация) и переходные фасады делегатов (`EncryptionService`),
+хранилище ключей (`KeyStore`: создание ключей,
 InstanceId и мастер-ключ в HKCU под защитой DPAPI — идемпотентность,
 round-trip записи/чтения, отказы повреждённых данных, очистка кэша), защита
 от перебора (`LoginGuard`), эндпоинты входа/выхода (`AccountEndpoints`: таблица
@@ -190,7 +192,8 @@ fetch-запроса и обычного перехода при выходе), 
 
 ```
 WebShelf/              Приложение Blazor Server
-  Classes/Crypto/      Хранилище ключей (InstanceId и мастер-ключ: HKCU + DPAPI)
+  Classes/Crypto/      Криптография: хранилище ключей (InstanceId и мастер-ключ:
+                       HKCU + DPAPI) и движок шифрования (AES-256-CBC + HMAC-SHA256)
   Classes/Service/     Системные сервисы (конфигурация, шифрование данных, защита входа)
   Classes/DB/          Работа с PostgreSQL
   Classes/DC/          Работа с Active Directory
