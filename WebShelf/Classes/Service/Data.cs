@@ -123,6 +123,16 @@ internal sealed class Data
     internal RoleCacheOptions? RoleCacheOptions { get; private set; }
 
     /// <summary>
+    /// Параметры сервисной инфраструктуры БД (каркас схемы, дампы, автосброс;
+    /// ключи <c>dbschema</c>, <c>dbskeletonpath</c>, <c>dbdumpspath</c>,
+    /// <c>dbdumpretentiondays</c>, <c>dbautoschemareset</c>).
+    /// <see langword="null"/> до чтения конфигурации или при ошибке.
+    /// Потребляется оркестратором <see cref="DbBootstrapper"/> после инициализации
+    /// <see cref="Database"/>.
+    /// </summary>
+    internal SchemaBootstrapperOptions? DbSchemaOptions { get; private set; }
+
+    /// <summary>
     /// Полный InstanceId (ULID, 26 символов). Write-once на весь срок жизни процесса.
     /// </summary>
     private string? _instanceId;
@@ -266,6 +276,8 @@ internal sealed class Data
             TlsCertificate = null;
             Port = null;
             Scheme = null;
+            RoleCacheOptions = null;
+            DbSchemaOptions = null;
 
             if (_instanceId is null)
             {
@@ -310,16 +322,19 @@ internal sealed class Data
             // Параметры ролевой модели (TTL кэша, интервал опроса)
             bool roleCacheOk = InitRoleCacheOptions(config);
 
+            // Параметры сервисной инфраструктуры БД (каркас, дампы, автосброс)
+            bool dbSchemaOk = InitDbSchemaOptions(config);
+
             // Сертификат инициализируется после схемы: нужен только при https
             bool certificateOk = CertificateSection.TryInitCertificate(
                 config, Scheme, CredentialsWriter, _keyStore, _cryptoEngine, out X509Certificate2? certificate);
             TlsCertificate = certificate;
 
-            if (domain is null || database is null || !portOk || !schemeOk || !roleCacheOk || !certificateOk)
+            if (domain is null || database is null || !portOk || !schemeOk || !roleCacheOk || !dbSchemaOk || !certificateOk)
             {
                 Log.Error(
-                    "Конфигурация загружена частично. DomainOk={DomainOk}, DatabaseOk={DatabaseOk}, PortOk={PortOk}, SchemeOk={SchemeOk}, RoleCacheOk={RoleCacheOk}, CertificateOk={CertificateOk}. Class={Class}, Method={Method}",
-                    domain is not null, database is not null, portOk, schemeOk, roleCacheOk, certificateOk, ClassName, method);
+                    "Конфигурация загружена частично. DomainOk={DomainOk}, DatabaseOk={DatabaseOk}, PortOk={PortOk}, SchemeOk={SchemeOk}, RoleCacheOk={RoleCacheOk}, DbSchemaOk={DbSchemaOk}, CertificateOk={CertificateOk}. Class={Class}, Method={Method}",
+                    domain is not null, database is not null, portOk, schemeOk, roleCacheOk, dbSchemaOk, certificateOk, ClassName, method);
                 return false;
             }
 
@@ -343,6 +358,7 @@ internal sealed class Data
             Port = null;
             Scheme = null;
             RoleCacheOptions = null;
+            DbSchemaOptions = null;
             return false;
         }
     }
@@ -477,5 +493,48 @@ internal sealed class Data
         }
 
         return int.TryParse(value.Trim(), out int parsed) ? parsed : null;
+    }
+
+    /// <summary>
+    /// Читает параметры сервисной инфраструктуры БД (ключи <c>dbschema</c>,
+    /// <c>dbskeletonpath</c>, <c>dbdumpspath</c>, <c>dbdumpretentiondays</c>,
+    /// <c>dbautoschemareset</c>) через <see cref="SchemaBootstrapperOptions.TryCreate"/>.
+    /// Все ключи опциональны; некорректные критичные значения (имя схемы, каталог
+    /// дампов внутри wwwroot) блокируют загрузку конфигурации (fail-secure).
+    /// </summary>
+    /// <param name="config">Словарь конфигурации.</param>
+    /// <returns>
+    /// <see langword="true"/> при успешной инициализации; <see langword="false"/> —
+    /// конфигурация считается не загруженной (fail-secure).
+    /// </returns>
+    private bool InitDbSchemaOptions(Dictionary<string, string> config)
+    {
+        const string method = nameof(InitDbSchemaOptions);
+
+        try
+        {
+            SchemaBootstrapperOptions? options = SchemaBootstrapperOptions.TryCreate(config);
+
+            if (options is null)
+            {
+                Log.Error(
+                    "Не удалось разобрать параметры сервисной инфраструктуры БД. Class={Class}, Method={Method}",
+                    ClassName, method);
+                DbSchemaOptions = null;
+                return false;
+            }
+
+            DbSchemaOptions = options;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(
+                ex,
+                "Ошибка инициализации параметров сервисной инфраструктуры БД. Class={Class}, Method={Method}",
+                ClassName, method);
+            DbSchemaOptions = null;
+            return false;
+        }
     }
 }

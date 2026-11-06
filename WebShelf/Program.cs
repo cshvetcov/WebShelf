@@ -7,6 +7,7 @@ using System.Globalization;
 using Serilog.Events;
 using WebShelf.Classes.Crypto;
 using WebShelf.Classes.DC;
+using WebShelf.Classes.DB;
 using WebShelf.Classes.Security;
 using WebShelf.Classes.Service;
 using WebShelf.Components;
@@ -104,6 +105,38 @@ try
     if (!await data.ReadConfigAsync())
     {
         Log.Fatal("Конфигурация не загружена. Приложение останавливается. Class={Class}, Method={Method}", ClassName, MethodName);
+        return 1;
+    }
+
+    // --- Сервисная инфраструктура БД (каркас, дамп, сброс / обновление структуры) ---
+    // Новый шаг порядка старта (ТЗ «Сервисная инфраструктура БД»): после
+    // DatabaseSection (создание Database + проверка доступности) и до передачи
+    // управления остальному приложению — синхронно с точки зрения старта (await).
+    // Приложение не начинает работу на «чужой» схеме: при несовпадении с каркасом
+    // и выключенном автосбросе (dbautoschemareset=false) старт прерывается (fail-fast),
+    // данные не затрагиваются. Изменения выполняются только после успешного дампа
+    // (или на пустой схеме).
+    if (data.Database is not Database database)
+    {
+        Log.Fatal(
+            "База данных не инициализирована после загрузки конфигурации. Приложение останавливается. Class={Class}, Method={Method}",
+            ClassName, MethodName);
+        return 1;
+    }
+
+    if (data.DbSchemaOptions is not SchemaBootstrapperOptions dbSchemaOptions)
+    {
+        Log.Fatal(
+            "Параметры сервисной инфраструктуры БД не инициализированы. Приложение останавливается. Class={Class}, Method={Method}",
+            ClassName, MethodName);
+        return 1;
+    }
+
+    if (!await DbBootstrapper.EnsureSchemaAsync(database, dbSchemaOptions))
+    {
+        Log.Fatal(
+            "Не удалось обеспечить соответствие структуры БД каркасу. Приложение останавливается. Class={Class}, Method={Method}",
+            ClassName, MethodName);
         return 1;
     }
 

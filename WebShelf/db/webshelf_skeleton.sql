@@ -1,0 +1,30 @@
+-- WebShelf: файл-каркас структуры БД (эталон структуры без данных).
+-- Версия каркаса: 1
+-- Схема: webshelf
+--
+-- Назначение: DbBootstrapper сравнивает живую схему с этим каркасом при старте
+-- и приводит её к каркасу (см. WebShelfDocs/Решения в проекте/База данных.md).
+--
+-- Правила:
+--  * поддерживаются только операторы CREATE SCHEMA, CREATE TABLE,
+--    ALTER TABLE ... ADD CONSTRAINT, ALTER TABLE ... ADD COLUMN,
+--    CREATE SEQUENCE и CREATE [UNIQUE] INDEX;
+--  * идентификаторы квалифицируются схемой webshelf (или опираются на search_path,
+--    который устанавливается перед применением);
+--  * данные (INSERT/COPY) в каркасе запрещены;
+--  * вместо serial/identity используйте явный CREATE SEQUENCE + DEFAULT nextval(...);
+--  * файл — часть поставки приложения, а не пользовательский ввод.
+--
+-- Пример таблицы (добавляйте реальные таблицы по мере появления сущностей):
+-- CREATE TABLE webshelf.documents (
+--     id          bigint                       NOT NULL,
+--     title       text                         NOT NULL,
+--     created_at  timestamp with time zone     NOT NULL DEFAULT now(),
+--     CONSTRAINT documents_pkey PRIMARY KEY (id)
+-- );
+--
+-- CREATE SEQUENCE webshelf.documents_id_seq AS bigint START WITH 1 INCREMENT BY 1;
+--
+-- CREATE INDEX documents_title_idx ON webshelf.documents (title);
+
+CREATE SCHEMA IF NOT EXISTS webshelf;

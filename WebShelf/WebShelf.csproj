@@ -32,6 +32,11 @@
     <None Update="Server.conf.template">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <!-- Файл-каркас структуры БД (эталон схемы webshelf): поставляется вместе
+         с приложением и читается DbBootstrapper при старте -->
+    <None Update="db/webshelf_skeleton.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
