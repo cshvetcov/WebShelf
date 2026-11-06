@@ -145,8 +145,8 @@ internal class Domain : IAdGroupSource
         string plainPassword;
         try
         {
-            plainUser = _cryptoEngine.Decrypt(encryptedUser.Trim(), masterKey);
-            plainPassword = _cryptoEngine.Decrypt(encryptedPassword.Trim(), masterKey);
+            plainUser = _cryptoEngine.Decrypt(encryptedUser.Trim(), masterKey, CryptoContexts.DomainUser);
+            plainPassword = _cryptoEngine.Decrypt(encryptedPassword.Trim(), masterKey, CryptoContexts.DomainPassword);
         }
         catch (Exception ex)
         {
@@ -178,8 +178,8 @@ internal class Domain : IAdGroupSource
         // Перед записью в поля — шифруем (нормализованный логин и пароль)
         try
         {
-            _encryptedUser = _cryptoEngine.Encrypt(userName.Trim(), masterKey);
-            _encryptedPassword = _cryptoEngine.Encrypt(plainPassword, masterKey);
+            _encryptedUser = _cryptoEngine.Encrypt(userName.Trim(), masterKey, CryptoContexts.DomainServiceUser);
+            _encryptedPassword = _cryptoEngine.Encrypt(plainPassword, masterKey, CryptoContexts.DomainServicePassword);
         }
         catch (Exception ex)
         {
@@ -222,7 +222,7 @@ internal class Domain : IAdGroupSource
 
         try
         {
-            return _cryptoEngine.Decrypt(_encryptedUser, masterKey);
+            return _cryptoEngine.Decrypt(_encryptedUser, masterKey, CryptoContexts.DomainServiceUser);
         }
         catch (Exception ex)
         {
@@ -253,7 +253,7 @@ internal class Domain : IAdGroupSource
 
         try
         {
-            return _cryptoEngine.Decrypt(_encryptedPassword, masterKey);
+            return _cryptoEngine.Decrypt(_encryptedPassword, masterKey, CryptoContexts.DomainServicePassword);
         }
         catch (Exception ex)
         {

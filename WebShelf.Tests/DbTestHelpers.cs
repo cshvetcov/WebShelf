@@ -70,8 +70,8 @@ internal static class DbTestHelpers
         CryptoEngine cryptoEngine = new();
         byte[] masterKey = keyStore.EnsureMasterKey()!;
 
-        string encryptedUser = cryptoEngine.Encrypt(username, masterKey);
-        string encryptedPassword = cryptoEngine.Encrypt(password, masterKey);
+        string encryptedUser = cryptoEngine.Encrypt(username, masterKey, CryptoContexts.DatabaseUser);
+        string encryptedPassword = cryptoEngine.Encrypt(password, masterKey, CryptoContexts.DatabasePassword);
 
         return new Database(host, port, databaseName, sslMode, encryptedUser, encryptedPassword, keyStore, cryptoEngine);
     }

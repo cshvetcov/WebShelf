@@ -114,8 +114,8 @@ public class DatabaseTests
         CryptoEngine cryptoEngine = new();
         byte[] key = keyStore.EnsureMasterKey()!;
 
-        string encryptedUser = cryptoEngine.Encrypt("db_webshelf", key);
-        string encryptedPass = cryptoEngine.Encrypt("TestPassword123!", key);
+        string encryptedUser = cryptoEngine.Encrypt("db_webshelf", key, CryptoContexts.DatabaseUser);
+        string encryptedPass = cryptoEngine.Encrypt("TestPassword123!", key, CryptoContexts.DatabasePassword);
 
         await using Database database = new(
             "localhost", 5432, "webshelf_test", SslMode.Prefer, encryptedUser, encryptedPass, keyStore, cryptoEngine);
@@ -138,8 +138,8 @@ public class DatabaseTests
         CryptoEngine cryptoEngine = new();
         byte[] key = keyStore.EnsureMasterKey()!;
 
-        string encryptedUser = cryptoEngine.Encrypt("db_webshelf", key);
-        string encryptedPass = cryptoEngine.Encrypt("TestPassword123!", key);
+        string encryptedUser = cryptoEngine.Encrypt("db_webshelf", key, CryptoContexts.DatabaseUser);
+        string encryptedPass = cryptoEngine.Encrypt("TestPassword123!", key, CryptoContexts.DatabasePassword);
 
         Database database = new(
             "localhost", 5432, "webshelf_test", SslMode.Prefer, encryptedUser, encryptedPass, keyStore, cryptoEngine);

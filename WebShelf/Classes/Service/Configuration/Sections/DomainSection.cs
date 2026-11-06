@@ -124,8 +124,8 @@ internal static class DomainSection
 
                 try
                 {
-                    plainUser = cryptoEngine.Decrypt(encryptedUser, masterKey);
-                    plainPass = cryptoEngine.Decrypt(encryptedPass, masterKey);
+                    plainUser = cryptoEngine.Decrypt(encryptedUser, masterKey, CryptoContexts.DomainUser);
+                    plainPass = cryptoEngine.Decrypt(encryptedPass, masterKey, CryptoContexts.DomainPassword);
                 }
                 catch (Exception ex)
                 {
@@ -193,8 +193,8 @@ internal static class DomainSection
 
                 try
                 {
-                    encryptedUser = cryptoEngine.Encrypt(plainUser, masterKey);
-                    encryptedPass = cryptoEngine.Encrypt(plainPass, masterKey);
+                    encryptedUser = cryptoEngine.Encrypt(plainUser, masterKey, CryptoContexts.DomainUser);
+                    encryptedPass = cryptoEngine.Encrypt(plainPass, masterKey, CryptoContexts.DomainPassword);
                 }
                 catch (Exception ex)
                 {

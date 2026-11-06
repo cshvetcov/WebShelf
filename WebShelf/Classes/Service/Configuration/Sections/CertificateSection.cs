@@ -117,7 +117,7 @@ internal static class CertificateSection
             {
                 try
                 {
-                    password = cryptoEngine.Decrypt(securePass.Trim(), masterKey);
+                    password = cryptoEngine.Decrypt(securePass.Trim(), masterKey, CryptoContexts.CertificatePassword);
                 }
                 catch (Exception ex)
                 {
@@ -151,7 +151,7 @@ internal static class CertificateSection
 
                 try
                 {
-                    string encryptedPass = cryptoEngine.Encrypt(password, masterKey);
+                    string encryptedPass = cryptoEngine.Encrypt(password, masterKey, CryptoContexts.CertificatePassword);
                     if (!credentialsWriter.WriteSecureCredentials(SecureCredentialsWriter.TlsCredentialKeys, null, encryptedPass))
                     {
                         Log.Error(

@@ -106,8 +106,8 @@ public class DomainTests
         CryptoEngine cryptoEngine = new();
         byte[] key = keyStore.EnsureMasterKey()!;
 
-        string encryptedUser = cryptoEngine.Encrypt("svc_webshelf", key);
-        string encryptedPassword = cryptoEngine.Encrypt("TestPassword123!", key);
+        string encryptedUser = cryptoEngine.Encrypt("svc_webshelf", key, CryptoContexts.DomainUser);
+        string encryptedPassword = cryptoEngine.Encrypt("TestPassword123!", key, CryptoContexts.DomainPassword);
 
         Domain domain = new("company.local", "abcdef012345", encryptedUser, encryptedPassword, keyStore, cryptoEngine);
 

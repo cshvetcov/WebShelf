@@ -4,43 +4,66 @@ using System.Text;
 namespace WebShelf.Classes.Crypto;
 
 /// <summary>
-/// Криптографический движок: синхронное шифрование AES-256-CBC + HMAC-SHA256
-/// (Encrypt-then-MAC). Формат полезной нагрузки: версия (1 байт) | IV (16) |
-/// ciphertext (PKCS7) | MAC (32).
+/// Криптографический движок: синхронное аутентифицированное шифрование
+/// AES-256-GCM (AEAD). Формат полезной нагрузки: версия (1 байт) | nonce (12) |
+/// ciphertext | тег аутентификации (16).
 /// </summary>
 /// <remarks>
-/// Проверка целостности (MAC, сравнение за постоянное время) выполняется
-/// <b>до</b> расшифровки AES; ключевой материал обнуляется в <c>finally</c>.
-/// Класс выделен из <c>EncryptionService</c> механическим переносом (шаг 4
-/// дорожной карты декомпозиции); изменения при переносе — только константа
-/// <c>Class=</c> в логах перенесённого кода (принцип 6 дорожной карты).
-/// Криптоформат заморожен: в <c>Server.conf</c> рабочих инсталляций лежат
-/// данные в этом формате, изменение любого байта схемы (версия, метки вывода
-/// ключей, порядок полей, алгоритмы) делает конфиги нечитаемыми.
+/// Ключ AES-256 выводится из мастер-ключа через HKDF-SHA256 (RFC 5869) по
+/// замороженной метке; ключевой материал обнуляется в <c>finally</c>.
+/// Аутентификация выполняется самим режимом GCM: тег покрывает nonce,
+/// ciphertext и дополнительные аутентифицированные данные (AAD), отдельная
+/// проверка MAC и сравнение за постоянное время не требуются — критическая
+/// операция реализована внутри BCL.
+/// <para>
+/// Дополнительные аутентифицированные данные (AAD) = версия формата ‖ контекст
+/// вызова. Каждый вызов <see cref="Encrypt(byte[], byte[], string)"/> и
+/// <see cref="Decrypt(byte[], byte[], string)"/> обязан передавать непустой
+/// контекст — метку назначения данных (см. <see cref="CryptoContexts"/>).
+/// Контекст привязывает шифроблоб к конкретному полю Server.conf или внутреннему
+/// полю класса: блоб, зашифрованный в одном контексте, не расшифровывается в
+/// другом, поэтому перестановка зашифрованных значений между полями конфигурации
+/// невозможна.
+/// </para>
+/// <para>
+/// Криптоформат заморожен: в <c>Server.conf</c> инсталляций лежат данные в этом
+/// формате, изменение любого байта схемы (версия, метка и соль вывода ключа,
+/// порядок полей, состав AAD, алгоритмы) делает конфиги нечитаемыми. Формат
+/// зафиксирован эталонной константой совместимости в <c>CryptoEngineTests</c>.
+/// </para>
+/// <para>
+/// Nonce — случайные 96 бит (<see cref="RandomNumberGenerator"/>). Ограничение
+/// NIST SP 800-38D на случайные nonce: не более 2^32 шифрований на ключ.
+/// Для объёмов <c>Server.conf</c> (единичные записи при записи учётных данных)
+/// запас избыточен; формат не предназначен для шифрования крупных массивов
+/// данных.
+/// </para>
 /// Движок не зависит от реестра и DPAPI и работает с явно переданным ключом —
-/// тестируется на любой ОС. Шаг 8 дорожной карты (улучшение У3): класс
-/// переведён со статического на инстансный и регистрируется в DI как готовый
-/// singleton (<c>AddSingleton(instance)</c>); перегрузки объявлены
+/// тестируется на любой ОС. Регистрируется в DI как готовый singleton
+/// (<c>AddSingleton(instance)</c>); перегрузки объявлены
 /// <see langword="virtual"/>, чтобы юнит-тесты могли подменять движок фейком.
-/// Поведение не изменилось: движок не содержит состояния.
+/// Движок не содержит состояния.
 /// </remarks>
 internal class CryptoEngine
 {
     private const string ClassName = "WebShelf.Classes.Crypto.CryptoEngine";
 
-    private const byte FormatVersion = 1;
+    private const byte FormatVersion = 2;
 
     private const int MasterKeySizeBytes = 32;
-    private const int IvSizeBytes = 16;
-    private const int HmacSizeBytes = 32;
-    private const int CipherBlockSizeBytes = 16;
+    private const int NonceSizeBytes = 12;
+    private const int TagSizeBytes = 16;
+    private const int AesKeySizeBytes = 32;
 
-    // Метки вывода ключей — часть замороженного криптоформата (HMAC-SHA256-KDF по
-    // меткам): значения перенесены из EncryptionService дословно и не меняются
-    // при переименовании/перемещении класса (изменение метки = изменение формата).
-    private static readonly byte[] AesKeyDerivationLabel = Encoding.UTF8.GetBytes("WebShelf.Classes.Service.EncryptionService.AES.v1");
+    // Метка вывода ключа HKDF — часть замороженного криптоформата: значение
+    // не меняется при переименовании/перемещении класса (изменение метки =
+    // изменение формата).
+    private static readonly byte[] AesKeyDerivationLabel = Encoding.UTF8.GetBytes("WebShelf.Classes.Crypto.CryptoEngine.AES-GCM.v2");
 
-    private static readonly byte[] HmacKeyDerivationLabel = Encoding.UTF8.GetBytes("WebShelf.Classes.Service.EncryptionService.HMAC.v1");
+    // Соль HKDF — 32 нулевых байта: значение по умолчанию RFC 5869, задано
+    // явно, чтобы вывод ключей не зависел от обработки null в перегрузках BCL.
+    // Часть замороженного криптоформата.
+    private static readonly byte[] HkdfSalt = new byte[32];
 
     /// <summary>
     /// Создаёт экземпляр <see cref="CryptoEngine"/>.
@@ -54,20 +77,24 @@ internal class CryptoEngine
     #region Шифрование byte[]
 
     /// <summary>
-    /// Шифрует массив байтов (AES-256-CBC, Encrypt-then-MAC).
+    /// Шифрует массив байтов (AES-256-GCM, AEAD).
     /// </summary>
-    /// <param name="data">Открытые данные.</param>
+    /// <param name="data">Открытые данные (допускается пустой массив).</param>
     /// <param name="key">Мастер-ключ длиной 32 байта.</param>
+    /// <param name="context">Контекст шифрования — метка назначения данных
+    /// (см. <see cref="CryptoContexts"/>); подмешивается в AAD и привязывает
+    /// блоб к назначению.</param>
     /// <returns>
     /// Зашифрованные данные в формате:
-    /// версия | IV | ciphertext | HMAC-SHA256.
+    /// версия | nonce | ciphertext | тег аутентификации GCM.
     /// </returns>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="data"/> или <paramref name="key"/> равен <see langword="null"/>.
     /// </exception>
-    /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам.</exception>
+    /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам
+    /// или контекст пустой.</exception>
     /// <exception cref="CryptographicException">Ошибка криптографической операции.</exception>
-    internal virtual byte[] Encrypt(byte[] data, byte[] key)
+    internal virtual byte[] Encrypt(byte[] data, byte[] key, string context)
     {
         const string method = nameof(Encrypt);
 
@@ -76,46 +103,38 @@ internal class CryptoEngine
             ArgumentNullException.ThrowIfNull(data);
 
             ValidateKey(key);
+            ValidateContext(context);
 
-            DeriveKeys(key, out byte[] aesKey, out byte[] hmacKey);
+            byte[] aesKey = DeriveAesKey(key);
 
             try
             {
-                byte[] iv;
-                byte[] cipherText;
+                byte[] associatedData = BuildAssociatedData(context);
+                byte[] nonce = RandomNumberGenerator.GetBytes(NonceSizeBytes);
+                byte[] cipherText = new byte[data.Length];
+                byte[] tag = new byte[TagSizeBytes];
 
-                using (Aes aes = Aes.Create())
+                using (AesGcm aesGcm = new(aesKey, TagSizeBytes))
                 {
-                    aes.Key = aesKey;
-                    aes.Mode = CipherMode.CBC;
-                    aes.Padding = PaddingMode.PKCS7;
-                    aes.GenerateIV();
-                    iv = aes.IV;
-
-                    using ICryptoTransform encryptor = aes.CreateEncryptor();
-                    cipherText = encryptor.TransformFinalBlock(data, 0, data.Length);
+                    aesGcm.Encrypt(nonce, data, cipherText, tag, associatedData);
                 }
 
-                int resultLength = 1 + IvSizeBytes + cipherText.Length + HmacSizeBytes;
+                int resultLength = 1 + NonceSizeBytes + cipherText.Length + TagSizeBytes;
                 byte[] result = new byte[resultLength];
                 result[0] = FormatVersion;
-                Buffer.BlockCopy(iv, 0, result, 1, IvSizeBytes);
-                Buffer.BlockCopy(cipherText, 0, result, 1 + IvSizeBytes, cipherText.Length);
-
-                using HMACSHA256 hmac = new(hmacKey);
-                byte[] mac = hmac.ComputeHash(result, 0, result.Length - HmacSizeBytes);
-                Buffer.BlockCopy(mac, 0, result, result.Length - HmacSizeBytes, HmacSizeBytes);
+                Buffer.BlockCopy(nonce, 0, result, 1, NonceSizeBytes);
+                Buffer.BlockCopy(cipherText, 0, result, 1 + NonceSizeBytes, cipherText.Length);
+                Buffer.BlockCopy(tag, 0, result, 1 + NonceSizeBytes + cipherText.Length, TagSizeBytes);
 
                 Log.Debug(
-                    "Данные зашифрованы. PlainLength={PlainLength}, CipherLength={CipherLength}. Class={Class}, Method={Method}",
-                    data.Length, result.Length, ClassName, method);
+                    "Данные зашифрованы. PlainLength={PlainLength}, CipherLength={CipherLength}, Context={Context}. Class={Class}, Method={Method}",
+                    data.Length, result.Length, context, ClassName, method);
 
                 return result;
             }
             finally
             {
                 ClearKeyMaterial(aesKey);
-                ClearKeyMaterial(hmacKey);
             }
         }
         catch (ArgumentNullException)
@@ -143,16 +162,20 @@ internal class CryptoEngine
     /// <summary>
     /// Шифрует массив байтов, используя ключ в Base64-формате.
     /// </summary>
-    /// <param name="data">Открытые данные.</param>
+    /// <param name="data">Открытые данные (допускается пустой массив).</param>
     /// <param name="base64Key">Мастер-ключ в Base64.</param>
-    /// <returns>Зашифрованные данные (версия | IV | ciphertext | MAC).</returns>
+    /// <param name="context">Контекст шифрования — метка назначения данных
+    /// (см. <see cref="CryptoContexts"/>); подмешивается в AAD и привязывает
+    /// блоб к назначению.</param>
+    /// <returns>Зашифрованные данные (версия | nonce | ciphertext | тег).</returns>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="data"/> или <paramref name="base64Key"/> равен <see langword="null"/>.
     /// </exception>
     /// <exception cref="FormatException">Некорректная Base64-строка ключа.</exception>
-    /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам.</exception>
+    /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам
+    /// или контекст пустой.</exception>
     /// <exception cref="CryptographicException">Ошибка криптографической операции.</exception>
-    internal virtual byte[] Encrypt(byte[] data, string base64Key)
+    internal virtual byte[] Encrypt(byte[] data, string base64Key, string context)
     {
         const string method = nameof(Encrypt);
 
@@ -163,7 +186,7 @@ internal class CryptoEngine
             byte[] key = Convert.FromBase64String(base64Key);
             try
             {
-                return Encrypt(data, key);
+                return Encrypt(data, key, context);
             }
             finally
             {
@@ -197,13 +220,17 @@ internal class CryptoEngine
     /// </summary>
     /// <param name="plainText">Открытый текст.</param>
     /// <param name="key">Мастер-ключ длиной 32 байта.</param>
+    /// <param name="context">Контекст шифрования — метка назначения данных
+    /// (см. <see cref="CryptoContexts"/>); подмешивается в AAD и привязывает
+    /// блоб к назначению.</param>
     /// <returns>Зашифрованные данные в Base64.</returns>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="plainText"/> или <paramref name="key"/> равен <see langword="null"/>.
     /// </exception>
-    /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам.</exception>
+    /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам
+    /// или контекст пустой.</exception>
     /// <exception cref="CryptographicException">Ошибка криптографической операции.</exception>
-    internal virtual string Encrypt(string plainText, byte[] key)
+    internal virtual string Encrypt(string plainText, byte[] key, string context)
     {
         const string method = nameof(Encrypt);
 
@@ -212,7 +239,7 @@ internal class CryptoEngine
             ArgumentNullException.ThrowIfNull(plainText);
 
             byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
-            byte[] encryptedBytes = Encrypt(plainBytes, key);
+            byte[] encryptedBytes = Encrypt(plainBytes, key, context);
             return Convert.ToBase64String(encryptedBytes);
         }
         catch (ArgumentNullException)
@@ -240,14 +267,18 @@ internal class CryptoEngine
     /// </summary>
     /// <param name="plainText">Открытый текст.</param>
     /// <param name="base64Key">Мастер-ключ в Base64.</param>
+    /// <param name="context">Контекст шифрования — метка назначения данных
+    /// (см. <see cref="CryptoContexts"/>); подмешивается в AAD и привязывает
+    /// блоб к назначению.</param>
     /// <returns>Зашифрованные данные в Base64.</returns>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="plainText"/> или <paramref name="base64Key"/> равен <see langword="null"/>.
     /// </exception>
     /// <exception cref="FormatException">Некорректная Base64-строка ключа.</exception>
-    /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам.</exception>
+    /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам
+    /// или контекст пустой.</exception>
     /// <exception cref="CryptographicException">Ошибка криптографической операции.</exception>
-    internal virtual string Encrypt(string plainText, string base64Key)
+    internal virtual string Encrypt(string plainText, string base64Key, string context)
     {
         const string method = nameof(Encrypt);
 
@@ -259,7 +290,7 @@ internal class CryptoEngine
             byte[] key = Convert.FromBase64String(base64Key);
             try
             {
-                return Encrypt(plainText, key);
+                return Encrypt(plainText, key, context);
             }
             finally
             {
@@ -289,19 +320,26 @@ internal class CryptoEngine
     #region Расшифровка byte[]
 
     /// <summary>
-    /// Расшифровывает массив байтов, ранее полученный методом <see cref="Encrypt(byte[], byte[])"/>.
+    /// Расшифровывает массив байтов, ранее полученный методом
+    /// <see cref="Encrypt(byte[], byte[], string)"/> в том же контексте.
     /// </summary>
-    /// <param name="encryptedData">Зашифрованные данные (версия | IV | ciphertext | MAC).</param>
+    /// <param name="encryptedData">Зашифрованные данные
+    /// (версия | nonce | ciphertext | тег).</param>
     /// <param name="key">Мастер-ключ длиной 32 байта.</param>
+    /// <param name="context">Контекст шифрования — тот же, что использовался
+    /// при шифровании; расшифровка в чужом контексте завершается сбоем
+    /// проверки тега.</param>
     /// <returns>Открытые данные.</returns>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="encryptedData"/> или <paramref name="key"/> равен <see langword="null"/>.
     /// </exception>
-    /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам.</exception>
+    /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам
+    /// или контекст пустой.</exception>
     /// <exception cref="CryptographicException">
-    /// Некорректный формат, неверная версия, сбой проверки MAC или ошибка расшифровки.
+    /// Некорректный формат, неверная версия, сбой проверки тега
+    /// (подмена данных, чужой ключ или чужой контекст) или ошибка расшифровки.
     /// </exception>
-    internal virtual byte[] Decrypt(byte[] encryptedData, byte[] key)
+    internal virtual byte[] Decrypt(byte[] encryptedData, byte[] key, string context)
     {
         const string method = nameof(Decrypt);
 
@@ -310,8 +348,9 @@ internal class CryptoEngine
             ArgumentNullException.ThrowIfNull(encryptedData);
 
             ValidateKey(key);
+            ValidateContext(context);
 
-            int minimumLength = 1 + IvSizeBytes + CipherBlockSizeBytes + HmacSizeBytes;
+            int minimumLength = 1 + NonceSizeBytes + TagSizeBytes;
             if (encryptedData.Length < minimumLength)
             {
                 Log.Warning(
@@ -328,63 +367,45 @@ internal class CryptoEngine
                 throw new CryptographicException("Неподдерживаемая версия формата шифрования.");
             }
 
-            int cipherTextLength = encryptedData.Length - 1 - IvSizeBytes - HmacSizeBytes;
-            if (cipherTextLength <= 0 || cipherTextLength % CipherBlockSizeBytes != 0)
-            {
-                Log.Warning(
-                    "Некорректная длина ciphertext. CipherTextLength={CipherTextLength}. Class={Class}, Method={Method}",
-                    cipherTextLength, ClassName, method);
-                throw new CryptographicException("Некорректная длина зашифрованных данных.");
-            }
-
-            DeriveKeys(key, out byte[] aesKey, out byte[] hmacKey);
+            byte[] aesKey = DeriveAesKey(key);
 
             try
             {
-                int macOffset = encryptedData.Length - HmacSizeBytes;
+                int cipherTextLength = encryptedData.Length - 1 - NonceSizeBytes - TagSizeBytes;
 
-                using HMACSHA256 hmac = new(hmacKey);
-                byte[] expectedMac = hmac.ComputeHash(encryptedData, 0, macOffset);
+                byte[] nonce = new byte[NonceSizeBytes];
+                byte[] cipherText = new byte[cipherTextLength];
+                byte[] tag = new byte[TagSizeBytes];
+                Buffer.BlockCopy(encryptedData, 1, nonce, 0, NonceSizeBytes);
+                Buffer.BlockCopy(encryptedData, 1 + NonceSizeBytes, cipherText, 0, cipherTextLength);
+                Buffer.BlockCopy(encryptedData, 1 + NonceSizeBytes + cipherTextLength, tag, 0, TagSizeBytes);
 
-                // Сравнение MAC за постоянное время (реализация BCL) — защита от timing-атак
-                bool isValidMac = CryptographicOperations.FixedTimeEquals(
-                    expectedMac,
-                    encryptedData.AsSpan(macOffset, HmacSizeBytes));
-                if (!isValidMac)
+                byte[] associatedData = BuildAssociatedData(context);
+                byte[] plainText = new byte[cipherTextLength];
+
+                using AesGcm aesGcm = new(aesKey, TagSizeBytes);
+                try
                 {
-                    Log.Warning(
-                        "Проверка целостности данных не пройдена. Class={Class}, Method={Method}",
-                        ClassName, method);
+                    aesGcm.Decrypt(nonce, cipherText, tag, plainText, associatedData);
+                }
+                catch (CryptographicException ex)
+                {
+                    // Сбой тега GCM: подмена данных, чужой ключ или чужой контекст AAD
+                    Log.Warning(ex,
+                        "Проверка целостности данных не пройдена. Context={Context}. Class={Class}, Method={Method}",
+                        context, ClassName, method);
                     throw new CryptographicException("Проверка целостности данных не пройдена.");
                 }
 
-                byte[] iv = new byte[IvSizeBytes];
-                byte[] cipherText = new byte[cipherTextLength];
-                Buffer.BlockCopy(encryptedData, 1, iv, 0, IvSizeBytes);
-                Buffer.BlockCopy(encryptedData, 1 + IvSizeBytes, cipherText, 0, cipherTextLength);
-
-                byte[] plainText;
-                using (Aes aes = Aes.Create())
-                {
-                    aes.Key = aesKey;
-                    aes.Mode = CipherMode.CBC;
-                    aes.Padding = PaddingMode.PKCS7;
-                    aes.IV = iv;
-
-                    using ICryptoTransform decryptor = aes.CreateDecryptor();
-                    plainText = decryptor.TransformFinalBlock(cipherText, 0, cipherText.Length);
-                }
-
                 Log.Debug(
-                    "Данные расшифрованы. CipherLength={CipherLength}, PlainLength={PlainLength}. Class={Class}, Method={Method}",
-                    encryptedData.Length, plainText.Length, ClassName, method);
+                    "Данные расшифрованы. CipherLength={CipherLength}, PlainLength={PlainLength}, Context={Context}. Class={Class}, Method={Method}",
+                    encryptedData.Length, plainText.Length, context, ClassName, method);
 
                 return plainText;
             }
             finally
             {
                 ClearKeyMaterial(aesKey);
-                ClearKeyMaterial(hmacKey);
             }
         }
         catch (ArgumentNullException)
@@ -409,16 +430,21 @@ internal class CryptoEngine
     /// <summary>
     /// Расшифровывает массив байтов, используя ключ в Base64-формате.
     /// </summary>
-    /// <param name="encryptedData">Зашифрованные данные.</param>
+    /// <param name="encryptedData">Зашифрованные данные
+    /// (версия | nonce | ciphertext | тег).</param>
     /// <param name="base64Key">Мастер-ключ в Base64.</param>
+    /// <param name="context">Контекст шифрования — тот же, что использовался
+    /// при шифровании; расшифровка в чужом контексте завершается сбоем
+    /// проверки тега.</param>
     /// <returns>Открытые данные.</returns>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="encryptedData"/> или <paramref name="base64Key"/> равен <see langword="null"/>.
     /// </exception>
     /// <exception cref="FormatException">Некорректная Base64-строка ключа.</exception>
-    /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам.</exception>
-    /// <exception cref="CryptographicException">Ошибка проверки целостности или расшифровки.</exception>
-    internal virtual byte[] Decrypt(byte[] encryptedData, string base64Key)
+    /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам
+    /// или контекст пустой.</exception>
+    /// <exception cref="CryptographicException">Ошибка проверки тега или расшифровки.</exception>
+    internal virtual byte[] Decrypt(byte[] encryptedData, string base64Key, string context)
     {
         const string method = nameof(Decrypt);
 
@@ -429,7 +455,7 @@ internal class CryptoEngine
             byte[] key = Convert.FromBase64String(base64Key);
             try
             {
-                return Decrypt(encryptedData, key);
+                return Decrypt(encryptedData, key, context);
             }
             finally
             {
@@ -463,14 +489,18 @@ internal class CryptoEngine
     /// </summary>
     /// <param name="encryptedBase64">Зашифрованные данные в Base64.</param>
     /// <param name="key">Мастер-ключ длиной 32 байта.</param>
+    /// <param name="context">Контекст шифрования — тот же, что использовался
+    /// при шифровании; расшифровка в чужом контексте завершается сбоем
+    /// проверки тега.</param>
     /// <returns>Открытый текст.</returns>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="encryptedBase64"/> или <paramref name="key"/> равен <see langword="null"/>.
     /// </exception>
     /// <exception cref="FormatException">Некорректная Base64-строка данных.</exception>
-    /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам.</exception>
-    /// <exception cref="CryptographicException">Ошибка проверки целостности или расшифровки.</exception>
-    internal virtual string Decrypt(string encryptedBase64, byte[] key)
+    /// <exception cref="ArgumentException">Длина ключа не равна 32 байтам
+    /// или контекст пустой.</exception>
+    /// <exception cref="CryptographicException">Ошибка проверки тега или расшифровки.</exception>
+    internal virtual string Decrypt(string encryptedBase64, byte[] key, string context)
     {
         const string method = nameof(Decrypt);
 
@@ -479,7 +509,7 @@ internal class CryptoEngine
             ArgumentNullException.ThrowIfNull(encryptedBase64);
 
             byte[] encryptedData = Convert.FromBase64String(encryptedBase64);
-            byte[] plainBytes = Decrypt(encryptedData, key);
+            byte[] plainBytes = Decrypt(encryptedData, key, context);
             return Encoding.UTF8.GetString(plainBytes);
         }
         catch (ArgumentNullException)
@@ -513,14 +543,18 @@ internal class CryptoEngine
     /// </summary>
     /// <param name="encryptedBase64">Зашифрованные данные в Base64.</param>
     /// <param name="base64Key">Мастер-ключ в Base64.</param>
+    /// <param name="context">Контекст шифрования — тот же, что использовался
+    /// при шифровании; расшифровка в чужом контексте завершается сбоем
+    /// проверки тега.</param>
     /// <returns>Открытый текст.</returns>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="encryptedBase64"/> или <paramref name="base64Key"/> равен <see langword="null"/>.
     /// </exception>
     /// <exception cref="FormatException">Некорректная Base64-строка.</exception>
-    /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам.</exception>
-    /// <exception cref="CryptographicException">Ошибка проверки целостности или расшифровки.</exception>
-    internal virtual string Decrypt(string encryptedBase64, string base64Key)
+    /// <exception cref="ArgumentException">Длина ключа после декодирования не равна 32 байтам
+    /// или контекст пустой.</exception>
+    /// <exception cref="CryptographicException">Ошибка проверки тега или расшифровки.</exception>
+    internal virtual string Decrypt(string encryptedBase64, string base64Key, string context)
     {
         const string method = nameof(Decrypt);
 
@@ -532,7 +566,7 @@ internal class CryptoEngine
             byte[] key = Convert.FromBase64String(base64Key);
             try
             {
-                return Decrypt(encryptedBase64, key);
+                return Decrypt(encryptedBase64, key, context);
             }
             finally
             {
@@ -577,13 +611,42 @@ internal class CryptoEngine
     }
 
     /// <summary>
-    /// Выводит из мастер-ключа отдельные ключи для AES и HMAC (HMAC-SHA256-KDF по меткам).
+    /// Проверяет, что контекст шифрования задан и не пустой: контекст обязателен —
+    /// он привязывает блоб к назначению через AAD.
     /// </summary>
-    private static void DeriveKeys(byte[] masterKey, out byte[] aesKey, out byte[] hmacKey)
+    private static void ValidateContext(string context)
     {
-        using HMACSHA256 kdf = new(masterKey);
-        aesKey = kdf.ComputeHash(AesKeyDerivationLabel);
-        hmacKey = kdf.ComputeHash(HmacKeyDerivationLabel);
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (string.IsNullOrWhiteSpace(context))
+        {
+            throw new ArgumentException(
+                "Контекст шифрования не может быть пустым. Укажите назначение данных (см. CryptoContexts).",
+                nameof(context));
+        }
+    }
+
+    /// <summary>
+    /// Строит дополнительные аутентифицированные данные (AAD) GCM:
+    /// версия формата ‖ UTF-8-байты контекста. Состав AAD — часть
+    /// замороженного криптоформата.
+    /// </summary>
+    private static byte[] BuildAssociatedData(string context)
+    {
+        byte[] contextBytes = Encoding.UTF8.GetBytes(context);
+        byte[] associatedData = new byte[1 + contextBytes.Length];
+        associatedData[0] = FormatVersion;
+        Buffer.BlockCopy(contextBytes, 0, associatedData, 1, contextBytes.Length);
+        return associatedData;
+    }
+
+    /// <summary>
+    /// Выводит из мастер-ключа ключ AES-256 (HKDF-SHA256 по замороженной метке,
+    /// RFC 5869; соль — 32 нулевых байта).
+    /// </summary>
+    private static byte[] DeriveAesKey(byte[] masterKey)
+    {
+        return HKDF.DeriveKey(HashAlgorithmName.SHA256, masterKey, AesKeySizeBytes, HkdfSalt, AesKeyDerivationLabel);
     }
 
     /// <summary>

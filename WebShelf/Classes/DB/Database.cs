@@ -128,8 +128,8 @@ internal sealed class Database : IAsyncDisposable, IDisposable
         byte[] masterKey = _keyStore.EnsureMasterKey()
             ?? throw new InvalidOperationException("Мастер-ключ недоступен для расшифровки учётных данных БД.");
 
-        string plainUser = _cryptoEngine.Decrypt(encryptedUser.Trim(), masterKey);
-        string plainPass = _cryptoEngine.Decrypt(encryptedPassword.Trim(), masterKey);
+        string plainUser = _cryptoEngine.Decrypt(encryptedUser.Trim(), masterKey, CryptoContexts.DatabaseUser);
+        string plainPass = _cryptoEngine.Decrypt(encryptedPassword.Trim(), masterKey, CryptoContexts.DatabasePassword);
 
         if (string.IsNullOrWhiteSpace(plainUser) || string.IsNullOrWhiteSpace(plainPass))
         {

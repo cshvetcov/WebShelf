@@ -99,8 +99,8 @@ public class DataConfigMigrationTests
 
             Assert.False(string.IsNullOrWhiteSpace(secureUser));
             Assert.False(string.IsNullOrWhiteSpace(securePass));
-            Assert.Equal("svc-account", cryptoEngine.Decrypt(secureUser!, key));
-            Assert.Equal("svc-secret", cryptoEngine.Decrypt(securePass!, key));
+            Assert.Equal("svc-account", cryptoEngine.Decrypt(secureUser!, key, CryptoContexts.DomainUser));
+            Assert.Equal("svc-secret", cryptoEngine.Decrypt(securePass!, key, CryptoContexts.DomainPassword));
         }
         finally
         {
@@ -124,8 +124,8 @@ public class DataConfigMigrationTests
             string path = Path.Combine(directory, "Server.conf");
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",
-                $"sdomainuser={cryptoEngine.Encrypt("svc-account", key)}",
-                $"sdomainpass={cryptoEngine.Encrypt("svc-secret", key)}",
+                $"sdomainuser={cryptoEngine.Encrypt("svc-account", key, CryptoContexts.DomainUser)}",
+                $"sdomainpass={cryptoEngine.Encrypt("svc-secret", key, CryptoContexts.DomainPassword)}",
                 "scheme=http",
                 "port=38080");
 
@@ -164,8 +164,8 @@ public class DataConfigMigrationTests
         try
         {
             string path = Path.Combine(directory, "Server.conf");
-            string encryptedUser = cryptoEngine.Encrypt("svc-account", key);
-            string encryptedPass = cryptoEngine.Encrypt("svc-secret", key);
+            string encryptedUser = cryptoEngine.Encrypt("svc-account", key, CryptoContexts.DomainUser);
+            string encryptedPass = cryptoEngine.Encrypt("svc-secret", key, CryptoContexts.DomainPassword);
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",
                 "sdomainuser=" + encryptedUser,
@@ -215,8 +215,8 @@ public class DataConfigMigrationTests
         try
         {
             string path = Path.Combine(directory, "Server.conf");
-            string encryptedUser = cryptoEngine.Encrypt("svc-account", key);
-            string encryptedPass = cryptoEngine.Encrypt("svc-secret", key);
+            string encryptedUser = cryptoEngine.Encrypt("svc-account", key, CryptoContexts.DomainUser);
+            string encryptedPass = cryptoEngine.Encrypt("svc-secret", key, CryptoContexts.DomainPassword);
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",
                 "sdomainuser=" + encryptedUser,
@@ -262,8 +262,8 @@ public class DataConfigMigrationTests
         try
         {
             string path = Path.Combine(directory, "Server.conf");
-            string encryptedDbUser = cryptoEngine.Encrypt("svc-db", key);
-            string encryptedDbPass = cryptoEngine.Encrypt("db-secret", key);
+            string encryptedDbUser = cryptoEngine.Encrypt("svc-db", key, CryptoContexts.DatabaseUser);
+            string encryptedDbPass = cryptoEngine.Encrypt("db-secret", key, CryptoContexts.DatabasePassword);
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",
                 "sdbuser=" + encryptedDbUser,
@@ -319,7 +319,7 @@ public class DataConfigMigrationTests
             string path = Path.Combine(directory, "Server.conf");
             string certPath = Path.Combine(directory, "cert.pfx");
             File.WriteAllBytes(certPath, "not-a-real-pfx"u8.ToArray());
-            string encryptedCertPass = cryptoEngine.Encrypt("cert-secret", key);
+            string encryptedCertPass = cryptoEngine.Encrypt("cert-secret", key, CryptoContexts.CertificatePassword);
 
             DataConfigTestHelpers.WriteUtf8NoBom(path,
                 $"domainname={UnreachableDomain}",

@@ -190,8 +190,8 @@ internal static class DatabaseSection
 
                 try
                 {
-                    encryptedUser = cryptoEngine.Encrypt(plainUser, masterKey);
-                    encryptedPass = cryptoEngine.Encrypt(plainPass, masterKey);
+                    encryptedUser = cryptoEngine.Encrypt(plainUser, masterKey, CryptoContexts.DatabaseUser);
+                    encryptedPass = cryptoEngine.Encrypt(plainPass, masterKey, CryptoContexts.DatabasePassword);
                 }
                 catch (Exception ex)
                 {
