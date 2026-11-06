@@ -1,6 +1,7 @@
 ﻿@*
     AppWindow — переиспользуемая оболочка окна WebShelf.
-    Обеспечивает заголовок, перетаскивание, кнопку закрытия и область содержимого.
+    Обеспечивает заголовок, перетаскивание (с удержанием в рабочей области и
+    «прилипанием» к краям), кнопку закрытия и область содержимого.
     Стили: wwwroot/css/window.css
     Скрипт: Components/Shared/AppWindow.razor.js (JS-isolation, ES-модуль)
 *@
@@ -41,7 +42,9 @@
     public string Title { get; set; } = "WebShelf";
 
     /// <summary>
-    /// Текст иконки в заголовке (например, «WS»). Пустая строка — иконка скрыта.
+    /// Текст иконки в заголовке. В пределах приложения всегда «WS»
+    /// и от окна к окну не меняется (см. WebShelfDocs, «Стиль окон.md», раздел 8).
+    /// Пустая строка — иконка скрыта.
     /// </summary>
     [Parameter]
     public string IconText { get; set; } = "WS";
@@ -71,6 +74,14 @@
     public bool Center { get; set; } = true;
 
     /// <summary>
+    /// Колбэк закрытия окна: вызывается, когда пользователь закрывает окно
+    /// кнопкой «×» (CanClose = true). Если колбэк не задан, окно после закрытия
+    /// просто скрывается (прежнее поведение — страница ничего не узнаёт о закрытии).
+    /// </summary>
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    /// <summary>
     /// Включать класс фона страницы body.ws-window-page.
     /// </summary>
     [Parameter]
@@ -91,6 +102,13 @@
     /// true только после успешного вызова init модуля (интерактивный режим).
     /// </summary>
     private bool _jsInitialized;
+
+    /// <summary>
+    /// Ссылка на .NET-объект для уведомления из JS о закрытии окна.
+    /// Создаётся только когда окно можно закрыть (CanClose) и задан <see cref="OnClose"/>;
+    /// передаётся в init AppWindow.razor.js и освобождается в DisposeAsync.
+    /// </summary>
+    private DotNetObjectReference<AppWindow>? _closeCallbackRef;
 
     /// <summary>
     /// Ссылка на ES-модуль AppWindow.razor.js (JS-isolation):
@@ -119,11 +137,18 @@
                 await _module.InvokeVoidAsync("setPageBackground", true);
             }
 
+            // Ссылка на .NET создаётся только для окон с подпиской на закрытие:
+            // у остальных окон JS-сторона уведомлять некого (пузырь или простое скрытие).
+            _closeCallbackRef = CanClose && OnClose.HasDelegate
+                ? DotNetObjectReference.Create(this)
+                : null;
+
             await _module.InvokeVoidAsync("init", WindowElementId, new
             {
                 canClose = CanClose,
                 closeBubbleText = CloseBubbleText,
-                center = Center
+                center = Center,
+                closeDotNetRef = _closeCallbackRef
             });
 
             _jsInitialized = true;
@@ -139,6 +164,26 @@
         catch (Exception ex)
         {
             Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(OnAfterRenderAsync));
+        }
+    }
+
+    /// <summary>
+    /// Уведомление из AppWindow.razor.js: окно закрыто кнопкой «×».
+    /// Вызывает <see cref="OnClose"/>, если на колбэк есть подписка.
+    /// </summary>
+    [JSInvokable]
+    public async Task NotifyClosedAsync()
+    {
+        try
+        {
+            if (OnClose.HasDelegate)
+            {
+                await OnClose.InvokeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(NotifyClosedAsync));
         }
     }
 
@@ -191,6 +236,10 @@
 
             _module = null;
             _jsInitialized = false;
+
+            // Ссылка на .NET больше не нужна: обработчики закрытия сняты в dispose JS-модуля.
+            _closeCallbackRef?.Dispose();
+            _closeCallbackRef = null;
         }
     }
 }

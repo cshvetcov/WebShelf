@@ -186,15 +186,20 @@ body.ws-ribbon-page {
     width: 100%;
 }
 
-/* Кнопка ленты (визуальный каркас) */
+/* Кнопка ленты (визуальный каркас).
+   Фиксированная геометрия по образцу больших кнопок Win-ленты:
+   все кнопки строго одинакового размера, подпись переносится максимум
+   на две строки и обрезается многоточием (полный текст — в title-подсказке). */
 .ws-ribbon-btn {
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    width: 76px;
+    height: 68px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 0.15rem;
-    min-width: 3.2rem;
-    max-width: 5.5rem;
     padding: 0.3rem 0.35rem;
     background: transparent;
     border: 1px solid transparent;
@@ -232,57 +237,14 @@ body.ws-ribbon-page {
 }
 
 .ws-ribbon-btn-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 100%;
+    overflow-wrap: break-word;
 }
-
-/* Фильтры */
-.ws-ribbon-filter {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.15rem 0.3rem;
-    font-size: 0.75rem;
-    color: #2A3A4A;
-}
-
-.ws-ribbon-filter-label {
-    white-space: nowrap;
-}
-
-.ws-ribbon-filter-select {
-    min-width: 7rem;
-    padding: 0.2rem 0.35rem;
-    font-size: 0.75rem;
-    color: #1E1E1E;
-    background: #FFFFFF;
-    border: 1px solid #A0B0C0;
-    border-radius: 3px;
-    outline: none;
-    cursor: default;
-}
-
-    .ws-ribbon-filter-select:focus {
-        border-color: #5080B0;
-        box-shadow: 0 0 0 2px rgba(80, 128, 176, 0.25);
-    }
-
-.ws-ribbon-filter-check {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    cursor: default;
-    font-size: 0.75rem;
-    color: #2A3A4A;
-}
-
-    .ws-ribbon-filter-check input {
-        width: 0.9rem;
-        height: 0.9rem;
-        accent-color: #5080B0;
-        pointer-events: none;
-    }
 
 /* Скрытые панели вкладок */
 .ws-ribbon-panel {
@@ -296,7 +258,7 @@ body.ws-ribbon-page {
         align-items: stretch;
     }
 
-/* Адаптив */
+/* Адаптив: геометрия кнопок ленты фиксирована и от ширины экрана не зависит */
 @media (max-width: 640px) {
     .ws-ribbon-tab {
         padding: 0.35rem 0.6rem;
@@ -305,10 +267,6 @@ body.ws-ribbon-page {
 
     .ws-ribbon-group {
         padding: 0 0.35rem;
-    }
-
-    .ws-ribbon-btn {
-        min-width: 2.8rem;
     }
 
     .ws-ribbon-appbar-user {

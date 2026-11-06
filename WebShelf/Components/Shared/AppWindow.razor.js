@@ -1,6 +1,7 @@
 /**
  * AppWindow.razor.js — JS-модуль окна WebShelf (колокация с AppWindow.razor).
- * Перетаскивание, кнопка закрытия (с пузырём или реальным закрытием),
+ * Перетаскивание с удержанием окна в рабочей области и «прилипанием» к краям,
+ * кнопка закрытия (с пузырём или реальным закрытием),
  * переключатель видимости пароля.
  *
  * Подключается через JS-isolation Blazor:
@@ -17,13 +18,28 @@
  * с общим реестром окон — как прежний глобальный window.WebShelfWindow.
  */
 
+/**
+ * Расстояние (px) от края окна до края рабочей области, при котором окно
+ * «прилипает» к краю. Рабочая область — видимая область браузера
+ * (window.innerWidth / window.innerHeight).
+ * Для тестов порог можно временно увеличить (например, до 40px).
+ */
+const SNAP_ATTACH_PX = 10;
+
+/**
+ * Расстояние (px), дальше которого прилипшее окно «отлипает» и снова
+ * следует за курсором. Намеренно больше SNAP_ATTACH_PX: гистерезис
+ * не даёт окну дребезжать на границе порога.
+ */
+const SNAP_DETACH_PX = 18;
+
 /** @type {Map<string, object>} */
 const instances = new Map();
 
 /**
  * Инициализирует поведение окна по id корневого элемента.
  * @param {string} elementId - id элемента .ws-window
- * @param {{ canClose?: boolean, closeBubbleText?: string, center?: boolean }} options
+ * @param {{ canClose?: boolean, closeBubbleText?: string, center?: boolean, closeDotNetRef?: object }} options
  */
 export function init(elementId, options) {
     try {
@@ -39,7 +55,8 @@ export function init(elementId, options) {
             {
                 canClose: false,
                 closeBubbleText: "Это окно не может быть закрыто",
-                center: true
+                center: true,
+                closeDotNetRef: null
             },
             options || {}
         );
@@ -60,6 +77,13 @@ export function init(elementId, options) {
             initialLeft: 0,
             initialTop: 0,
             bubbleTimer: null,
+            // Флаги «прилипания» к краям рабочей области; живут между
+            // перетаскиваниями: окно, оставленное у края, начинает следующий
+            // перенос прилипшим и отлипает только после порога отлипания.
+            stuckLeft: false,
+            stuckRight: false,
+            stuckTop: false,
+            stuckBottom: false,
             handlers: {}
         };
 
@@ -85,8 +109,11 @@ export function init(elementId, options) {
 
             state.handlers.onMouseMove = function (e) {
                 if (!state.isDragging) return;
-                root.style.left = state.initialLeft + (e.clientX - state.startX) + "px";
-                root.style.top = state.initialTop + (e.clientY - state.startY) + "px";
+                moveWindow(
+                    state,
+                    state.initialLeft + (e.clientX - state.startX),
+                    state.initialTop + (e.clientY - state.startY)
+                );
             };
 
             state.handlers.onMouseUp = function () {
@@ -112,8 +139,11 @@ export function init(elementId, options) {
             state.handlers.onTouchMove = function (e) {
                 if (!state.isDragging) return;
                 const touch = e.touches[0];
-                root.style.left = state.initialLeft + (touch.clientX - state.startX) + "px";
-                root.style.top = state.initialTop + (touch.clientY - state.startY) + "px";
+                moveWindow(
+                    state,
+                    state.initialLeft + (touch.clientX - state.startX),
+                    state.initialTop + (touch.clientY - state.startY)
+                );
             };
 
             state.handlers.onTouchEnd = function () {
@@ -137,6 +167,7 @@ export function init(elementId, options) {
                 if (opts.canClose) {
                     root.style.display = "none";
                     root.dispatchEvent(new CustomEvent("wswindow-closed", { bubbles: true }));
+                    notifyClosed(opts);
                     return;
                 }
 
@@ -180,11 +211,15 @@ export function init(elementId, options) {
             state.passwordToggles.push({ btn, handler });
         });
 
-        // --- Реакция на resize (перецентрирование, если окно ещё не двигали) ---
+        // --- Реакция на resize ---
+        // Окно, которое ещё не двигали, перецентрируется; сдвинутое —
+        // дотягивается обратно в пределы рабочей области (без прилипания).
         state.handlers.onResize = function () {
             if (!state.moved && opts.center) {
                 centerWindow(root);
+                return;
             }
+            clampWindowToWorkArea(root);
         };
         // Помечаем, что пользователь сдвинул окно
         const markMoved = function () {
@@ -243,6 +278,140 @@ export function dispose(elementId) {
     } catch (err) {
         console.error("[WebShelfWindow.dispose]", err);
     }
+}
+
+// --- Позиционирование: границы рабочей области и прилипание ---
+
+/**
+ * Вычисляет и применяет позицию окна при перетаскивании:
+ * желаемые координаты пропускаются через границы рабочей области
+ * и «прилипание» к краям по каждой оси независимо.
+ * @param {object} state - состояние экземпляра окна
+ * @param {number} desiredLeft - желаемый left без ограничений
+ * @param {number} desiredTop - желаемый top без ограничений
+ */
+function moveWindow(state, desiredLeft, desiredTop) {
+    state.root.style.left = constrainHorizontal(state, desiredLeft) + "px";
+    state.root.style.top = constrainVertical(state, desiredTop) + "px";
+}
+
+/**
+ * Возвращает координату left с учётом границ рабочей области и прилипания.
+ * @param {object} state - состояние экземпляра окна
+ * @param {number} desiredLeft - желаемый left без ограничений
+ * @returns {number}
+ */
+function constrainHorizontal(state, desiredLeft) {
+    const maxLeft = window.innerWidth - state.root.offsetWidth;
+
+    // Окно шире рабочей области: целиком удержать его внутри невозможно,
+    // левый край прижимается к нулю, за правый край заходить разрешено.
+    if (maxLeft < 0) {
+        return 0;
+    }
+
+    const distLeft = desiredLeft;
+    const distRight = maxLeft - desiredLeft;
+
+    updateSnapFlags(state, "Left", distLeft);
+    updateSnapFlags(state, "Right", distRight);
+
+    if (state.stuckLeft && state.stuckRight) {
+        // Возможно только у окна, почти равного по ширине рабочей области:
+        // сильнее «магнитит» более близкий край.
+        return distLeft <= distRight ? 0 : maxLeft;
+    }
+    if (state.stuckLeft) {
+        return 0;
+    }
+    if (state.stuckRight) {
+        return maxLeft;
+    }
+    return Math.min(Math.max(desiredLeft, 0), maxLeft);
+}
+
+/**
+ * Возвращает координату top с учётом границ рабочей области и прилипания.
+ * @param {object} state - состояние экземпляра окна
+ * @param {number} desiredTop - желаемый top без ограничений
+ * @returns {number}
+ */
+function constrainVertical(state, desiredTop) {
+    const maxTop = window.innerHeight - state.root.offsetHeight;
+
+    // Окно выше рабочей области: верхний край прижат к нулю,
+    // за нижний край заходить разрешено.
+    if (maxTop < 0) {
+        return 0;
+    }
+
+    const distTop = desiredTop;
+    const distBottom = maxTop - desiredTop;
+
+    updateSnapFlags(state, "Top", distTop);
+    updateSnapFlags(state, "Bottom", distBottom);
+
+    if (state.stuckTop && state.stuckBottom) {
+        return distTop <= distBottom ? 0 : maxTop;
+    }
+    if (state.stuckTop) {
+        return 0;
+    }
+    if (state.stuckBottom) {
+        return maxTop;
+    }
+    return Math.min(Math.max(desiredTop, 0), maxTop);
+}
+
+/**
+ * Обновляет один флаг прилипания с гистерезисом: прилипание — когда
+ * расстояние до края не больше SNAP_ATTACH_PX, отлипание — когда оно
+ * превысило SNAP_DETACH_PX. Между порогами флаг сохраняет значение.
+ * @param {object} state - состояние экземпляра окна
+ * @param {string} side - сторона: "Left", "Right", "Top" или "Bottom"
+ * @param {number} distance - расстояние от края окна до края области (px)
+ */
+function updateSnapFlags(state, side, distance) {
+    const flag = "stuck" + side;
+    if (state[flag]) {
+        if (distance > SNAP_DETACH_PX) {
+            state[flag] = false;
+        }
+        return;
+    }
+    if (distance <= SNAP_ATTACH_PX) {
+        state[flag] = true;
+    }
+}
+
+/**
+ * Держит окно в пределах рабочей области после изменения размеров
+ * окна браузера (без прилипания — только границы).
+ * @param {HTMLElement} root - корневой элемент окна
+ */
+function clampWindowToWorkArea(root) {
+    const maxLeft = window.innerWidth - root.offsetWidth;
+    const maxTop = window.innerHeight - root.offsetHeight;
+    const left = parseFloat(root.style.left) || 0;
+    const top = parseFloat(root.style.top) || 0;
+    root.style.left = (maxLeft < 0 ? 0 : Math.min(Math.max(left, 0), maxLeft)) + "px";
+    root.style.top = (maxTop < 0 ? 0 : Math.min(Math.max(top, 0), maxTop)) + "px";
+}
+
+/**
+ * Уведомляет .NET-компонент о закрытии окна (если передан closeDotNetRef):
+ * вызывается после реального закрытия кнопкой «×», чтобы Blazor мог
+ * переключить отображение (например, вернуть окно «Вход в систему»).
+ * @param {object} opts - опции экземпляра окна
+ */
+function notifyClosed(opts) {
+    if (!opts.closeDotNetRef) {
+        return;
+    }
+    opts.closeDotNetRef.invokeMethodAsync("NotifyClosedAsync")
+        .catch(function (err) {
+            console.error("[WebShelfWindow] Не удалось уведомить .NET о закрытии окна", err);
+        });
 }
 
 /**

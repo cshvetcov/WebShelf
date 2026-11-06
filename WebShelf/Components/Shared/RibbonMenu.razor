@@ -34,34 +34,6 @@
                 aria-selected="true" id="tab-projects">
             Проекты
         </button>
-        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="documents"
-                aria-selected="false" id="tab-documents">
-            Документы
-        </button>
-        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="tasks"
-                aria-selected="false" id="tab-tasks">
-            Задания
-        </button>
-        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="expertise"
-                aria-selected="false" id="tab-expertise">
-            Экспертиза
-        </button>
-        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="issued"
-                aria-selected="false" id="tab-issued">
-            Выданное
-        </button>
-        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="changes"
-                aria-selected="false" id="tab-changes">
-            Изменения
-        </button>
-        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="approval"
-                aria-selected="false" id="tab-approval">
-            Согласование
-        </button>
-        <button type="button" class="ws-ribbon-tab" role="tab" data-tab="constructor"
-                aria-selected="false" id="tab-constructor">
-            Конструктор
-        </button>
         <button type="button" class="ws-ribbon-tab" role="tab" data-tab="users"
                 aria-selected="false" id="tab-users">
             Пользователи
@@ -89,97 +61,9 @@
                 </div>
                 <div class="ws-ribbon-group-label">Управление</div>
             </div>
-            <div class="ws-ribbon-group">
-                <div class="ws-ribbon-group-items">
-                    <div class="ws-ribbon-filter">
-                        <span class="ws-ribbon-filter-label">Организация:</span>
-                        <select class="ws-ribbon-filter-select" disabled aria-label="Организация">
-                            <option>Все</option>
-                        </select>
-                    </div>
-                    <div class="ws-ribbon-filter-check">
-                        <input type="checkbox" id="ribbon-only-mine" disabled checked />
-                        <label for="ribbon-only-mine">Только мои</label>
-                    </div>
-                </div>
-                <div class="ws-ribbon-group-label">Фильтрация</div>
-            </div>
-            <div class="ws-ribbon-group">
-                <div class="ws-ribbon-group-items">
-                    <div class="ws-ribbon-btn" title="Закрыть проект">
-                        <span class="ws-ribbon-btn-icon" aria-hidden="true">🗄</span>
-                        <span class="ws-ribbon-btn-text">Закрыть проект</span>
-                    </div>
-                    <div class="ws-ribbon-btn" title="Не получать сообщения">
-                        <span class="ws-ribbon-btn-icon" aria-hidden="true">✉</span>
-                        <span class="ws-ribbon-btn-text">Не получать сообщения</span>
-                    </div>
-                    <div class="ws-ribbon-btn" title="Показать сообщения">
-                        <span class="ws-ribbon-btn-icon" aria-hidden="true">💬</span>
-                        <span class="ws-ribbon-btn-text">Показать сообщения</span>
-                    </div>
-                </div>
-                <div class="ws-ribbon-group-label">Действия</div>
-            </div>
         </div>
 
-        @* Остальные панели — пустые каркасы *@
-        <div class="ws-ribbon-panel" data-panel="documents" role="tabpanel" aria-labelledby="tab-documents">
-            <div class="ws-ribbon-group">
-                <div class="ws-ribbon-group-items">
-                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">📄</span><span class="ws-ribbon-btn-text">Документы</span></div>
-                </div>
-                <div class="ws-ribbon-group-label">Документы</div>
-            </div>
-        </div>
-        <div class="ws-ribbon-panel" data-panel="tasks" role="tabpanel" aria-labelledby="tab-tasks">
-            <div class="ws-ribbon-group">
-                <div class="ws-ribbon-group-items">
-                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">✅</span><span class="ws-ribbon-btn-text">Задания</span></div>
-                </div>
-                <div class="ws-ribbon-group-label">Задания</div>
-            </div>
-        </div>
-        <div class="ws-ribbon-panel" data-panel="expertise" role="tabpanel" aria-labelledby="tab-expertise">
-            <div class="ws-ribbon-group">
-                <div class="ws-ribbon-group-items">
-                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">🔍</span><span class="ws-ribbon-btn-text">Экспертиза</span></div>
-                </div>
-                <div class="ws-ribbon-group-label">Экспертиза</div>
-            </div>
-        </div>
-        <div class="ws-ribbon-panel" data-panel="issued" role="tabpanel" aria-labelledby="tab-issued">
-            <div class="ws-ribbon-group">
-                <div class="ws-ribbon-group-items">
-                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">📤</span><span class="ws-ribbon-btn-text">Выданное</span></div>
-                </div>
-                <div class="ws-ribbon-group-label">Выданное</div>
-            </div>
-        </div>
-        <div class="ws-ribbon-panel" data-panel="changes" role="tabpanel" aria-labelledby="tab-changes">
-            <div class="ws-ribbon-group">
-                <div class="ws-ribbon-group-items">
-                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">📝</span><span class="ws-ribbon-btn-text">Изменения</span></div>
-                </div>
-                <div class="ws-ribbon-group-label">Изменения</div>
-            </div>
-        </div>
-        <div class="ws-ribbon-panel" data-panel="approval" role="tabpanel" aria-labelledby="tab-approval">
-            <div class="ws-ribbon-group">
-                <div class="ws-ribbon-group-items">
-                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">✔️</span><span class="ws-ribbon-btn-text">Согласование</span></div>
-                </div>
-                <div class="ws-ribbon-group-label">Согласование</div>
-            </div>
-        </div>
-        <div class="ws-ribbon-panel" data-panel="constructor" role="tabpanel" aria-labelledby="tab-constructor">
-            <div class="ws-ribbon-group">
-                <div class="ws-ribbon-group-items">
-                    <div class="ws-ribbon-btn"><span class="ws-ribbon-btn-icon">🛠</span><span class="ws-ribbon-btn-text">Конструктор</span></div>
-                </div>
-                <div class="ws-ribbon-group-label">Конструктор</div>
-            </div>
-        </div>
+        @* Панель «Пользователи» — каркас *@
         <div class="ws-ribbon-panel" data-panel="users" role="tabpanel" aria-labelledby="tab-users">
             <div class="ws-ribbon-group">
                 <div class="ws-ribbon-group-items">

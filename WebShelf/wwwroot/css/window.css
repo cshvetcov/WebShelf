@@ -261,6 +261,32 @@ body.ws-window-page {
         cursor: not-allowed;
     }
 
+/* Вторичная кнопка действия (ghost): прозрачный фон + светлая граница.
+   Используется для неосновных действий (например, «Зарегистрироваться»
+   на окне входа); геометрия совпадает с ws-btn-primary. */
+.ws-btn-secondary {
+    width: 100%;
+    margin-top: 0.6rem;
+    padding: 0.75rem 1rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #FFFFFF;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, transform 0.15s;
+}
+
+    .ws-btn-secondary:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.55);
+    }
+
+    .ws-btn-secondary:active {
+        transform: scale(0.98);
+    }
+
 /* Сообщения */
 .ws-message {
     margin-top: 1.1rem;
