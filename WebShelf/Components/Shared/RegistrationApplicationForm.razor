@@ -1,0 +1,225 @@
+@* Форма заявки на регистрацию — тело окна «Подача заявки на регистрацию»
+   (страница /entry). Все поля обязательны: фамилия, имя, отчество, E-Mail,
+   номер телефона в формате +7 (XXX) XXX-XX-XX и согласие на обработку
+   персональных данных. Форматы телефона и e-mail проверяются автоматически
+   по мере ввода (RegistrationFormValidator): телефон укладывается в маску,
+   ошибки появляются под полями после первого касания (blur) и обновляются
+   при каждом вводе.
+   По задаче кнопка «Подать заявку» не выполняет действий — обработка
+   отправки появится вместе с логикой регистрации (аналогично заглушке
+   кнопки «Продолжить» окна активации разрешения).
+   Ссылка согласия ведёт на статичную страницу /personal-data-policy.html
+   и открывается в новой вкладке: уход со страницы оборвал бы цепь Blazor
+   и введённые данные заявки потерялись бы. *@
+@using WebShelf.Classes.Service
+
+<div class="ws-form-group">
+    <label for="lastName">Фамилия</label>
+    <div class="ws-input-wrapper">
+        <input type="text"
+               id="lastName"
+               placeholder="Фамилия"
+               required
+               autofocus
+               autocomplete="family-name"
+               class="@(InputClass(LastNameError))"
+               @bind="lastName"
+               @onblur="MarkLastNameTouched" />
+    </div>
+    @if (LastNameError is not null)
+    {
+        <div class="ws-field-error" role="alert">@LastNameError</div>
+    }
+</div>
+
+<div class="ws-form-group">
+    <label for="firstName">Имя</label>
+    <div class="ws-input-wrapper">
+        <input type="text"
+               id="firstName"
+               placeholder="Имя"
+               required
+               autocomplete="given-name"
+               class="@(InputClass(FirstNameError))"
+               @bind="firstName"
+               @onblur="MarkFirstNameTouched" />
+    </div>
+    @if (FirstNameError is not null)
+    {
+        <div class="ws-field-error" role="alert">@FirstNameError</div>
+    }
+</div>
+
+<div class="ws-form-group">
+    <label for="patronymic">Отчество</label>
+    <div class="ws-input-wrapper">
+        <input type="text"
+               id="patronymic"
+               placeholder="Отчество"
+               required
+               autocomplete="additional-name"
+               class="@(InputClass(PatronymicError))"
+               @bind="patronymic"
+               @onblur="MarkPatronymicTouched" />
+    </div>
+    @if (PatronymicError is not null)
+    {
+        <div class="ws-field-error" role="alert">@PatronymicError</div>
+    }
+</div>
+
+<div class="ws-form-group">
+    <label for="email">E-Mail</label>
+    <div class="ws-input-wrapper">
+        <input type="email"
+               id="email"
+               placeholder="user@example.ru"
+               required
+               autocomplete="email"
+               inputmode="email"
+               class="@(InputClass(EmailError))"
+               @bind="email"
+               @onblur="MarkEmailTouched" />
+    </div>
+    @if (EmailError is not null)
+    {
+        <div class="ws-field-error" role="alert">@EmailError</div>
+    }
+</div>
+
+<div class="ws-form-group">
+    <label for="phone">Номер телефона</label>
+    <div class="ws-input-wrapper">
+        <input type="tel"
+               id="phone"
+               placeholder="@RegistrationFormValidator.PhoneMaskHint"
+               required
+               autocomplete="tel"
+               inputmode="tel"
+               class="@(InputClass(PhoneError))"
+               @bind="phone"
+               @bind:event="oninput"
+               @bind:after="NormalizePhone"
+               @onblur="MarkPhoneTouched" />
+    </div>
+    @if (PhoneError is not null)
+    {
+        <div class="ws-field-error" role="alert">@PhoneError</div>
+    }
+</div>
+
+@* Согласие на обработку персональных данных (ч. 1 ст. 9 152-ФЗ): отметка
+   чек-бокса с текстом согласия и ссылкой на политику. Обязательно к заполнению
+   наравне с остальными полями. *@
+<div class="ws-form-check ws-form-check-consent">
+    <input type="checkbox"
+           id="pdConsent"
+           required
+           @bind="consent"
+           @bind:after="MarkConsentTouched" />
+    <label for="pdConsent">
+        Я даю согласие на обработку моих персональных данных (фамилия, имя,
+        отчество, адрес электронной почты, номер телефона) в целях рассмотрения
+        заявки на регистрацию в системе WebShelf в соответствии с Федеральным
+        законом от 27.07.2006 № 152-ФЗ «О персональных данных» и
+        <a class="ws-consent-link" href="/personal-data-policy.html" target="_blank" rel="noopener">Политикой обработки персональных данных</a>.
+    </label>
+</div>
+@if (ConsentError is not null)
+{
+    <div class="ws-field-error" role="alert">@ConsentError</div>
+}
+
+@* Заглушка по задаче: кнопка не выполняет действий — обработка отправки
+   заявки появится вместе с логикой регистрации *@
+<button type="button" class="ws-btn-primary">Подать заявку</button>
+
+@code {
+    /// <summary>Значение поля «Фамилия».</summary>
+    private string lastName = string.Empty;
+
+    /// <summary>Значение поля «Имя».</summary>
+    private string firstName = string.Empty;
+
+    /// <summary>Значение поля «Отчество».</summary>
+    private string patronymic = string.Empty;
+
+    /// <summary>Значение поля «E-Mail».</summary>
+    private string email = string.Empty;
+
+    /// <summary>Значение поля «Номер телефона» (в маске +7 (XXX) XXX-XX-XX).</summary>
+    private string phone = string.Empty;
+
+    /// <summary>true — согласие на обработку персональных данных установлено.</summary>
+    private bool consent;
+
+    /// <summary>
+    /// Признаки «поле тронуто» (первый blur/изменение): ошибка показывается
+    /// только после касания поля, чтобы не ругаться на ещё не заполненную форму.
+    /// </summary>
+    private bool lastNameTouched;
+    private bool firstNameTouched;
+    private bool patronymicTouched;
+    private bool emailTouched;
+    private bool phoneTouched;
+    private bool consentTouched;
+
+    /// <summary>Ошибка поля «Фамилия»; null — ошибки нет.</summary>
+    private string? LastNameError =>
+        lastNameTouched ? RegistrationFormValidator.NameError(lastName, "фамилию") : null;
+
+    /// <summary>Ошибка поля «Имя»; null — ошибки нет.</summary>
+    private string? FirstNameError =>
+        firstNameTouched ? RegistrationFormValidator.NameError(firstName, "имя") : null;
+
+    /// <summary>Ошибка поля «Отчество»; null — ошибки нет.</summary>
+    private string? PatronymicError =>
+        patronymicTouched ? RegistrationFormValidator.NameError(patronymic, "отчество") : null;
+
+    /// <summary>Ошибка поля «E-Mail»; null — ошибки нет.</summary>
+    private string? EmailError =>
+        emailTouched ? RegistrationFormValidator.EmailError(email) : null;
+
+    /// <summary>Ошибка поля «Номер телефона»; null — ошибки нет.</summary>
+    private string? PhoneError =>
+        phoneTouched ? RegistrationFormValidator.PhoneError(phone) : null;
+
+    /// <summary>Ошибка чек-бокса согласия; null — ошибки нет.</summary>
+    private string? ConsentError =>
+        consentTouched ? RegistrationFormValidator.ConsentError(consent) : null;
+
+    /// <summary>
+    /// После каждого ввода телефона укладывает введённые цифры в маску
+    /// +7 (XXX) XXX-XX-XX (вызывается @bind:after).
+    /// </summary>
+    private void NormalizePhone()
+    {
+        string masked = RegistrationFormValidator.ApplyPhoneMask(phone);
+        if (masked != phone)
+        {
+            phone = masked;
+        }
+    }
+
+    /// <summary>CSS-класс поля ввода: ws-input-invalid при видимой ошибке.</summary>
+    /// <param name="error">Ошибка поля или null.</param>
+    private static string InputClass(string? error) => error is null ? string.Empty : "ws-input-invalid";
+
+    /// <summary>Помечает поле «Фамилия» тронутым (показ ошибок).</summary>
+    private void MarkLastNameTouched() => lastNameTouched = true;
+
+    /// <summary>Помечает поле «Имя» тронутым (показ ошибок).</summary>
+    private void MarkFirstNameTouched() => firstNameTouched = true;
+
+    /// <summary>Помечает поле «Отчество» тронутым (показ ошибок).</summary>
+    private void MarkPatronymicTouched() => patronymicTouched = true;
+
+    /// <summary>Помечает поле «E-Mail» тронутым (показ ошибок).</summary>
+    private void MarkEmailTouched() => emailTouched = true;
+
+    /// <summary>Помечает поле «Номер телефона» тронутым (показ ошибок).</summary>
+    private void MarkPhoneTouched() => phoneTouched = true;
+
+    /// <summary>Помечает чек-бокс согласия тронутым (показ ошибок).</summary>
+    private void MarkConsentTouched() => consentTouched = true;
+}

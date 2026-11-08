@@ -6,6 +6,8 @@
    ============================================================================= */
 
 /* --- Футер сайта --- */
+/* Ссылки на политики размещены по центру футера, с визуальным
+   разделителем между ними */
 .ws-footer {
     position: fixed;
     left: 0;
@@ -13,7 +15,7 @@
     bottom: 0;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     gap: 1rem;
     min-height: 2.1rem;
     padding: 0.3rem 1rem;
@@ -25,14 +27,22 @@
     z-index: 5;
 }
 
-    .ws-footer .ws-footer-appname {
-        font-weight: 600;
-        color: rgba(255, 255, 255, 0.65);
-        white-space: nowrap;
+    /* Группа ссылок на политики в центре футера */
+    .ws-footer .ws-footer-links {
+        display: flex;
+        align-items: center;
+        gap: 0.9rem;
+    }
+
+    /* Визуальное разделение ссылок на политики (декоративный элемент) */
+    .ws-footer .ws-footer-separator {
+        color: rgba(255, 255, 255, 0.3);
+        user-select: none;
     }
 
     /* Статичная ссылка на политику: обычный переход (не Blazor-роутинг),
-       цель — предопубликованный документ wwwroot/cookie-policy.html */
+       цель — предопубликованный документ wwwroot (cookie-policy.html,
+       personal-data-policy.html) */
     .ws-footer .ws-footer-link {
         color: rgba(255, 255, 255, 0.75);
         text-decoration: none;
@@ -53,8 +63,8 @@ body.ws-ribbon-page .ws-footer {
     color: #1A3050;
 }
 
-    body.ws-ribbon-page .ws-footer .ws-footer-appname {
-        color: #1A3050;
+    body.ws-ribbon-page .ws-footer .ws-footer-separator {
+        color: #7A90A8;
     }
 
     body.ws-ribbon-page .ws-footer .ws-footer-link {

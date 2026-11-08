@@ -1,9 +1,14 @@
-﻿@* Футер сайта: статичная ссылка на политику обработки файлов cookie.
-   Ссылка — обычный <a> без Blazor-навигации: цель предопубликована в wwwroot
-   (cookie-policy.html), документ не генерируется приложением и может
-   заменяться после развёртывания без пересборки (см. WebShelfDocs/Решения
-   в проекте/Обработка cookie.md). *@
+﻿@* Футер сайта: статичные ссылки на политику обработки файлов cookie
+   и политику обработки персональных данных. Ссылки размещены по центру
+   футера с визуальным разделением. Ссылки — обычные <a> без Blazor-навигации:
+   цели предопубликованы в wwwroot (cookie-policy.html, personal-data-policy.html),
+   документы не генерируются приложением и могут заменяться после развёртывания
+   без пересборки (см. WebShelfDocs/Решения в проекте/Обработка cookie.md
+   и Обработка персональных данных.md). *@
 <footer class="ws-footer">
-    <span class="ws-footer-appname">WebShelf</span>
-    <a class="ws-footer-link" href="/cookie-policy.html">Политика обработки файлов cookie</a>
+    <nav class="ws-footer-links" aria-label="Политики обработки данных">
+        <a class="ws-footer-link" href="/cookie-policy.html">Политика обработки файлов cookie</a>
+        <span class="ws-footer-separator" aria-hidden="true">|</span>
+        <a class="ws-footer-link" href="/personal-data-policy.html">Политика обработки персональных данных</a>
+    </nav>
 </footer>

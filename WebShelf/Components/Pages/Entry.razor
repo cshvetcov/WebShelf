@@ -16,19 +16,21 @@
 @inject IHttpContextAccessor HttpContextAccessor
 @inject IJSRuntime Js
 @inject LoginGuard LoginGuard
+@inject RegistrationPermitChecker PermitChecker
 
 <PageTitle>Вход в систему WebShelf</PageTitle>
 
 @* Заголовок первого уровня для FocusOnNavigate и скринридеров *@
 <h1 class="ws-visually-hidden">Вход в систему</h1>
 
-@* Окна страницы /entry показываются по очереди: «Вход в систему» и
-   «Активация разрешения» — переключаются кнопкой «Зарегистрироваться»
-   и закрытием окна активации. Фон страницы (body.ws-window-page) ведёт
+@* Окна страницы /entry показываются по очереди: «Вход в систему»,
+   «Активация разрешения» и «Подача заявки на регистрацию» — переключаются
+   кнопкой «Зарегистрироваться», кнопкой «Продолжить» (проверка пермита в БД)
+   и закрытием окон. Фон страницы (body.ws-window-page) ведёт
    сама страница (см. OnAfterRenderAsync/DisposeAsync): при смене окон
    DisposeAsync старого окна может выполниться после первого рендера
    нового, поэтому окна рендерятся с ApplyPageBackground=false. *@
-@if (!showPermitActivation)
+@if (currentWindow == EntryWindow.Login)
 {
     <AppWindow Title="Вход в систему — WebShelf"
                IconText="WS"
@@ -94,9 +96,13 @@
             @(isLocked ? "Вход временно заблокирован" : "Войти")
         </button>
 
-        @* type="button": форма POST-ит на /account/login, клик не должен её отправлять *@
-        <button type="button" class="ws-btn-secondary" @onclick="OpenPermitActivation">
-            Зарегистрироваться
+        @* type="button": форма POST-ит на /account/login, клик не должен её отправлять.
+           Кнопка блокируется на 15 с после неудачной проверки пермита
+           (CountdownLockout, обратный отсчёт в тексте кнопки) *@
+        <button type="button" class="ws-btn-secondary" @onclick="OpenPermitActivation" disabled="@registrationLockout.IsLocked">
+            @(registrationLockout.IsLocked
+                ? $"Регистрация доступна через {registrationLockout.RemainingSeconds} с."
+                : "Зарегистрироваться")
         </button>
 
         @if (isLocked)
@@ -113,18 +119,20 @@
     </form>
 </AppWindow>
 }
-else
+else if (currentWindow == EntryWindow.PermitActivation)
 {
     @* Окно «Активация разрешения»: визуально повторяет окно входа (тот же AppWindow
-       и стили window.css). Закрытие кнопкой «×» возвращает на окно входа через OnClose. *@
+       и стили window.css). Закрытие кнопкой «×» возвращает на окно входа через OnClose.
+       Кнопка «Продолжить» проверяет пермит в БД (RegistrationPermitChecker):
+       пермит найден и счётчик регистраций больше нуля — открывается окно подачи
+       заявки, иначе пользователь возвращается на окно входа с блокировкой кнопки
+       «Зарегистрироваться» на 15 с. *@
     <AppWindow Title="Активация разрешения — WebShelf"
                IconText="WS"
                CanClose="true"
                OnClose="ClosePermitActivation"
                ApplyPageBackground="false"
                MaxWidth="420px">
-        @* Единственное обязательное поле; валидация и обработка значения
-           появятся вместе с логикой кнопки «Продолжить» *@
         <div class="ws-form-group">
             <label for="permit">Пермит</label>
             <div class="ws-input-wrapper">
@@ -132,12 +140,39 @@ else
                        id="permit"
                        placeholder="Введите ключ разрешения"
                        required
-                       autocomplete="off" />
+                       autocomplete="off"
+                       disabled="@isCheckingPermit"
+                       @bind="permitValue"
+                       @bind:event="oninput" />
             </div>
         </div>
 
-        @* Заглушка по задаче: кнопка пока не выполняет действий *@
-        <button type="button" class="ws-btn-primary">Продолжить</button>
+        @* Ошибка сервера при проверке пермита: окно остаётся открытым,
+           повторная попытка возможна сразу *@
+        @if (!string.IsNullOrEmpty(permitErrorMessage))
+        {
+            <div class="ws-message ws-message-error" role="alert">@permitErrorMessage</div>
+        }
+
+        <button type="button" class="ws-btn-primary" @onclick="SubmitPermitAsync" disabled="@isCheckingPermit">
+            @(isCheckingPermit ? "Проверка пермита..." : "Продолжить")
+        </button>
+    </AppWindow>
+}
+else
+{
+    @* Окно «Подача заявки на регистрацию»: открывается после успешной проверки
+       пермита (найден в БД, счётчик регистраций больше нуля). Закрытие кнопкой
+       «×» возвращает на окно входа (не в окно активации). Форма — компонент
+       RegistrationApplicationForm; состояние формы сбрасывается закрытием
+       окна (компонент размонтируется). *@
+    <AppWindow Title="Подача заявки на регистрацию — WebShelf"
+               IconText="WS"
+               CanClose="true"
+               OnClose="CloseRegistrationApplication"
+               ApplyPageBackground="false"
+               MaxWidth="420px">
+        <RegistrationApplicationForm />
     </AppWindow>
 }
 
@@ -149,11 +184,60 @@ else
     private string returnUrl = string.Empty;
 
     /// <summary>
-    /// true — на странице показано окно «Активация разрешения»;
-    /// false — окно «Вход в систему». Окна сменяют друг друга:
-    /// на странице всегда ровно одно окно.
+    /// Окно страницы /entry, показываемое в текущий момент.
+    /// Окна сменяют друг друга: на странице всегда ровно одно окно.
     /// </summary>
-    private bool showPermitActivation;
+    private enum EntryWindow
+    {
+        /// <summary>Окно «Вход в систему» (форма входа).</summary>
+        Login,
+
+        /// <summary>Окно «Активация разрешения» (ввод пермита).</summary>
+        PermitActivation,
+
+        /// <summary>Окно «Подача заявки на регистрацию» (анкета кандидата).</summary>
+        RegistrationApplication
+    }
+
+    /// <summary>
+    /// Текущее окно страницы /entry; по умолчанию — окно «Вход в систему».
+    /// </summary>
+    private EntryWindow currentWindow = EntryWindow.Login;
+
+    /// <summary>
+    /// Значение поля «Пермит». Не сохраняется при смене окон: возврат
+    /// на окно входа и обратно сбрасывает ввод.
+    /// </summary>
+    private string permitValue = string.Empty;
+
+    /// <summary>
+    /// Сообщение об ошибке сервера при проверке пермита (показывается
+    /// в окне активации; пустое — ошибки нет).
+    /// </summary>
+    private string permitErrorMessage = string.Empty;
+
+    /// <summary>
+    /// true — выполняется проверка пермита в БД: поле и кнопка «Продолжить»
+    /// заблокированы, повторный запуск проверки исключён.
+    /// </summary>
+    private bool isCheckingPermit;
+
+    /// <summary>
+    /// Длительность блокировки кнопки «Зарегистрироваться» после
+    /// неудачной проверки пермита, секунд.
+    /// </summary>
+    private const int RegistrationLockoutSeconds = 15;
+
+    /// <summary>
+    /// Блокировка кнопки «Зарегистрироваться» после неудачной проверки
+    /// пермита: 15 секунд с обратным отсчётом (CountdownLockout).
+    /// </summary>
+    private readonly CountdownLockout registrationLockout = new();
+
+    /// <summary>
+    /// Таймер обратного отсчёта блокировки кнопки «Зарегистрироваться».
+    /// </summary>
+    private System.Threading.Timer? _registrationLockoutTimer;
 
     /// <summary>
     /// true, если токен не удалось получить из HttpContext — тогда OnAfterRenderAsync
@@ -247,10 +331,10 @@ else
     /// <summary>
     /// После первого интерактивного рендера применяет фон страницы
     /// (body.ws-window-page) и при необходимости дочитывает CSRF-токен
-    /// из meta-тега. Фон ставится страницей, а не окнами: окна «Вход» и
-    /// «Активация разрешения» сменяют друг друга, и DisposeAsync старого
-    /// окна может выполниться уже после первого рендера нового — при
-    /// управлении из окон фон мигнул бы или пропал.
+    /// из meta-тега. Фон ставится страницей, а не окнами: окна страницы
+    /// /entry сменяют друг друга, и DisposeAsync старого окна может
+    /// выполниться уже после первого рендера нового — при управлении
+    /// из окон фон мигнул бы или пропал.
     /// </summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -293,20 +377,140 @@ else
 
     /// <summary>
     /// Открывает окно «Активация разрешения» вместо окна «Вход в систему»
-    /// (кнопка «Зарегистрироваться» на форме входа).
+    /// (кнопка «Зарегистрироваться» на форме входа). При активной блокировке
+    /// не вызывается: кнопка заблокирована.
     /// </summary>
     private void OpenPermitActivation()
     {
-        showPermitActivation = true;
+        currentWindow = EntryWindow.PermitActivation;
     }
 
     /// <summary>
     /// Возвращает пользователя на окно «Вход в систему»: колбэк закрытия
     /// окна «Активация разрешения» (AppWindow.OnClose → JS NotifyClosedAsync).
+    /// Введённый пермит сбрасывается.
     /// </summary>
     private void ClosePermitActivation()
     {
-        showPermitActivation = false;
+        permitValue = string.Empty;
+        permitErrorMessage = string.Empty;
+        currentWindow = EntryWindow.Login;
+    }
+
+    /// <summary>
+    /// Возвращает пользователя на окно «Вход в систему»: колбэк закрытия
+    /// окна «Подача заявки на регистрацию» (AppWindow.OnClose →
+    /// JS NotifyClosedAsync). Введённые данные заявки сбрасываются
+    /// вместе с размонтированием формы.
+    /// </summary>
+    private void CloseRegistrationApplication()
+    {
+        currentWindow = EntryWindow.Login;
+    }
+
+    /// <summary>
+    /// Обрабатывает нажатие «Продолжить»: проверяет пермит в БД
+    /// (RegistrationPermitChecker). Пермит найден и счётчик регистраций
+    /// больше нуля — открывается окно подачи заявки; иначе пользователь
+    /// возвращается на окно входа, а кнопка «Зарегистрироваться»
+    /// блокируется на 15 с с обратным отсчётом. Ошибки сервера не
+    /// списываются на пользователя: окно остаётся открытым с сообщением.
+    /// </summary>
+    private async Task SubmitPermitAsync()
+    {
+        const string method = nameof(SubmitPermitAsync);
+
+        if (isCheckingPermit)
+        {
+            return;
+        }
+
+        isCheckingPermit = true;
+        permitErrorMessage = string.Empty;
+
+        try
+        {
+            RegistrationPermitCheckResult result = await PermitChecker.CheckAsync(permitValue);
+
+            // Введённый пермит не сохраняется при смене окна
+            permitValue = string.Empty;
+
+            if (result.IsUsable)
+            {
+                currentWindow = EntryWindow.RegistrationApplication;
+            }
+            else
+            {
+                // Пермит не найден или исчерпан: возврат на окно входа
+                // с блокировкой кнопки «Зарегистрироваться»
+                currentWindow = EntryWindow.Login;
+                StartRegistrationLockout();
+            }
+        }
+        catch (OperationCanceledException ex)
+        {
+            Log.Debug(ex, "Проверка пермита отменена. Class={Class}, Method={Method}", ClassName, method);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
+            permitErrorMessage = "Ошибка сервера при проверке пермита. Повторите попытку.";
+        }
+        finally
+        {
+            isCheckingPermit = false;
+        }
+    }
+
+    /// <summary>
+    /// Запускает обратный отсчёт блокировки кнопки «Зарегистрироваться»
+    /// после неудачной проверки пермита (15 с).
+    /// </summary>
+    private void StartRegistrationLockout()
+    {
+        try
+        {
+            registrationLockout.Start(RegistrationLockoutSeconds);
+
+            _registrationLockoutTimer?.Dispose();
+            _registrationLockoutTimer = new System.Threading.Timer(_ => _ = TickRegistrationLockoutAsync(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(StartRegistrationLockout));
+        }
+    }
+
+    /// <summary>
+    /// Один тик обратного отсчёта блокировки кнопки «Зарегистрироваться».
+    /// Асинхронный вызов выделен из колбэка таймера: задача не отбрасывается
+    /// молча — все исключения наблюдаются и логируются (как в TickLockoutAsync).
+    /// </summary>
+    private async Task TickRegistrationLockoutAsync()
+    {
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                registrationLockout.Tick();
+                if (!registrationLockout.IsLocked)
+                {
+                    _registrationLockoutTimer?.Dispose();
+                    _registrationLockoutTimer = null;
+                }
+                StateHasChanged();
+            });
+        }
+        catch (JSDisconnectedException)
+        {
+            // Цепь Blazor разорвана — страница уходит, отсчёт больше не нужен.
+            _registrationLockoutTimer?.Dispose();
+            _registrationLockoutTimer = null;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(TickRegistrationLockoutAsync));
+        }
     }
 
     /// <summary>
@@ -371,6 +575,9 @@ else
     {
         _lockoutTimer?.Dispose();
         _lockoutTimer = null;
+
+        _registrationLockoutTimer?.Dispose();
+        _registrationLockoutTimer = null;
 
         if (_windowModule is not null)
         {

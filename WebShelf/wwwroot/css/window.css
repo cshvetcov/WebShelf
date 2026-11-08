@@ -169,7 +169,9 @@ body.ws-window-page {
     }
 
     .ws-window-body input[type="text"],
-    .ws-window-body input[type="password"] {
+    .ws-window-body input[type="password"],
+    .ws-window-body input[type="email"],
+    .ws-window-body input[type="tel"] {
         width: 100%;
         padding: 0.75rem 1rem;
         padding-right: 2.8rem;
@@ -184,16 +186,31 @@ body.ws-window-page {
     }
 
         .ws-window-body input[type="text"]::placeholder,
-        .ws-window-body input[type="password"]::placeholder {
+        .ws-window-body input[type="password"]::placeholder,
+        .ws-window-body input[type="email"]::placeholder,
+        .ws-window-body input[type="tel"]::placeholder {
             color: rgba(255, 255, 255, 0.35);
         }
 
         .ws-window-body input[type="text"]:focus,
-        .ws-window-body input[type="password"]:focus {
+        .ws-window-body input[type="password"]:focus,
+        .ws-window-body input[type="email"]:focus,
+        .ws-window-body input[type="tel"]:focus {
             border-color: rgba(10, 89, 102, 0.8);
             background: rgba(0, 0, 0, 0.38);
             box-shadow: 0 0 0 3px rgba(10, 89, 102, 0.25);
         }
+
+        /* Поле с видимой ошибкой валидации (например, некорректный
+           e-mail или неполный номер телефона) */
+        .ws-window-body input.ws-input-invalid {
+            border-color: rgba(220, 80, 80, 0.55);
+        }
+
+            .ws-window-body input.ws-input-invalid:focus {
+                border-color: rgba(220, 80, 80, 0.8);
+                box-shadow: 0 0 0 3px rgba(180, 40, 40, 0.2);
+            }
 
 /* Кнопка показа/скрытия пароля */
 .ws-toggle-password {
@@ -330,6 +347,44 @@ body.ws-window-page {
         accent-color: #0A5966;
         cursor: pointer;
     }
+
+/* Чекбокс согласия на обработку персональных данных (форма заявки
+   на регистрацию): длинная подпись выравнивается по верхнему краю
+   чекбокса и переносится по строкам; в подписи есть ссылка на политику */
+.ws-form-check.ws-form-check-consent {
+    align-items: flex-start;
+    margin-top: 0.25rem;
+}
+
+    .ws-form-check.ws-form-check-consent input[type="checkbox"] {
+        flex-shrink: 0;
+        margin-top: 0.15rem;
+    }
+
+    .ws-form-check.ws-form-check-consent label {
+        margin-bottom: 0;
+        line-height: 1.4;
+        cursor: pointer;
+    }
+
+    .ws-form-check.ws-form-check-consent .ws-consent-link {
+        color: #9FD8E8;
+        text-decoration: none;
+    }
+
+        .ws-form-check.ws-form-check-consent .ws-consent-link:hover,
+        .ws-form-check.ws-form-check-consent .ws-consent-link:focus-visible {
+            color: #FFFFFF;
+            text-decoration: underline;
+        }
+
+/* Ошибка конкретного поля формы (автоматическая проверка форматов
+   e-mail и телефона по мере ввода) */
+.ws-field-error {
+    margin-top: 0.35rem;
+    font-size: 0.78rem;
+    color: #FFB0B0;
+}
 
 /* Адаптив */
 @media (max-width: 480px) {

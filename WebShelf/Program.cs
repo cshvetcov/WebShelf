@@ -346,6 +346,13 @@ try
 
     builder.Services.AddSingleton<LoginGuard>();
 
+    // Проверка регистрационных пермитов в БД (кнопка «Продолжить» окна
+    // «Активация разрешения» на странице /entry): без состояния, singleton.
+    // Регистрируется готовым экземпляром (как data/keyStore/cryptoEngine):
+    // класс internal с primary-конструктором не активируется контейнером DI
+    // через public-конструктор
+    builder.Services.AddSingleton(new RegistrationPermitChecker(database));
+
     // --- Ролевая модель (варианты 1+2+3) ---
     // Вариант 1: TTL-кэш роли в резолвере (rolettl, по умолчанию 60 с).
     // Вариант 2: фоновый опрос ролевых групп с push-обновлением открытых цепочек
