@@ -1,0 +1,141 @@
+/* =============================================================================
+   footer.css — стили футера сайта и баннера согласия на обработку cookie
+   Требования: Визуальное оформление.md, Стиль окон.md
+   Футер — фиксированная полоса внизу страницы на всех экранах:
+   тёмная тема (страницы окон) и светлая тема (страница ленты).
+   ============================================================================= */
+
+/* --- Футер сайта --- */
+.ws-footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-height: 2.1rem;
+    padding: 0.3rem 1rem;
+    background: rgba(46, 46, 48, 0.96);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.55);
+    user-select: none;
+    z-index: 5;
+}
+
+    .ws-footer .ws-footer-appname {
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.65);
+        white-space: nowrap;
+    }
+
+    /* Статичная ссылка на политику: обычный переход (не Blazor-роутинг),
+       цель — предопубликованный документ wwwroot/cookie-policy.html */
+    .ws-footer .ws-footer-link {
+        color: rgba(255, 255, 255, 0.75);
+        text-decoration: none;
+        white-space: nowrap;
+        transition: color 0.15s;
+    }
+
+        .ws-footer .ws-footer-link:hover,
+        .ws-footer .ws-footer-link:focus-visible {
+            color: #FFFFFF;
+            text-decoration: underline;
+        }
+
+/* Светлая тема страницы ленты (body.ws-ribbon-page из ribbon.css) */
+body.ws-ribbon-page .ws-footer {
+    background: rgba(220, 230, 240, 0.96);
+    border-top: 1px solid #A0B0C0;
+    color: #1A3050;
+}
+
+    body.ws-ribbon-page .ws-footer .ws-footer-appname {
+        color: #1A3050;
+    }
+
+    body.ws-ribbon-page .ws-footer .ws-footer-link {
+        color: #2E5E8C;
+    }
+
+        body.ws-ribbon-page .ws-footer .ws-footer-link:hover,
+        body.ws-ribbon-page .ws-footer .ws-footer-link:focus-visible {
+            color: #1A3050;
+        }
+
+/* --- Баннер согласия на обработку cookie (CookieConsent) ---
+   Показывается только при включённом ключе cookieconsent (Server.conf)
+   и отсутствии сохранённого решения; располагается над футером. */
+.ws-cookie-consent {
+    position: fixed;
+    left: 0.5rem;
+    right: 0.5rem;
+    /* Над фиксированным футером (высота футера ≈ 44px + зазор) */
+    bottom: 3.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0.9rem 1.1rem;
+    background: #1A1A1C;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    font-size: 0.82rem;
+    color: #F0F0F0;
+    z-index: 15;
+}
+
+    .ws-cookie-consent .ws-cookie-consent-text {
+        margin: 0;
+        line-height: 1.4;
+    }
+
+    .ws-cookie-consent .ws-cookie-consent-link {
+        color: #9FD8E8;
+        text-decoration: none;
+    }
+
+        .ws-cookie-consent .ws-cookie-consent-link:hover,
+        .ws-cookie-consent .ws-cookie-consent-link:focus-visible {
+            color: #FFFFFF;
+            text-decoration: underline;
+        }
+
+    .ws-cookie-consent .ws-cookie-consent-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        flex-shrink: 0;
+    }
+
+    /* Компактные варианты кнопок ws-btn-* (window.css): полный размер
+       кнопок рассчитан на формы окон и слишком крупен для баннера */
+    .ws-cookie-consent .ws-btn-primary,
+    .ws-cookie-consent .ws-btn-secondary {
+        padding: 0.45rem 0.9rem;
+        font-size: 0.82rem;
+        white-space: nowrap;
+    }
+
+@media (max-width: 480px) {
+    .ws-cookie-consent {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+        .ws-cookie-consent .ws-cookie-consent-actions {
+            justify-content: stretch;
+        }
+
+            .ws-cookie-consent .ws-cookie-consent-actions .ws-btn-primary,
+            .ws-cookie-consent .ws-cookie-consent-actions .ws-btn-secondary {
+                flex: 1 1 auto;
+            }
+}

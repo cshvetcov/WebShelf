@@ -133,6 +133,14 @@ internal sealed class Data
     internal SchemaBootstrapperOptions? DbSchemaOptions { get; private set; }
 
     /// <summary>
+    /// Параметры инфраструктуры согласия на обработку файлов cookie
+    /// (ключ <c>cookieconsent</c> — включение баннера согласия).
+    /// <see langword="null"/> до чтения конфигурации или при ошибке.
+    /// Потребляется компонентом CookieConsent (баннер по умолчанию выключен).
+    /// </summary>
+    internal CookieConsentOptions? CookieConsentOptions { get; private set; }
+
+    /// <summary>
     /// Полный InstanceId (ULID, 26 символов). Write-once на весь срок жизни процесса.
     /// </summary>
     private string? _instanceId;
@@ -278,6 +286,7 @@ internal sealed class Data
             Scheme = null;
             RoleCacheOptions = null;
             DbSchemaOptions = null;
+            CookieConsentOptions = null;
 
             if (_instanceId is null)
             {
@@ -325,16 +334,19 @@ internal sealed class Data
             // Параметры сервисной инфраструктуры БД (каркас, дампы, автосброс)
             bool dbSchemaOk = InitDbSchemaOptions(config);
 
+            // Параметры инфраструктуры согласия на обработку cookie (баннер)
+            bool cookieConsentOk = InitCookieConsentOptions(config);
+
             // Сертификат инициализируется после схемы: нужен только при https
             bool certificateOk = CertificateSection.TryInitCertificate(
                 config, Scheme, CredentialsWriter, _keyStore, _cryptoEngine, out X509Certificate2? certificate);
             TlsCertificate = certificate;
 
-            if (domain is null || database is null || !portOk || !schemeOk || !roleCacheOk || !dbSchemaOk || !certificateOk)
+            if (domain is null || database is null || !portOk || !schemeOk || !roleCacheOk || !dbSchemaOk || !cookieConsentOk || !certificateOk)
             {
                 Log.Error(
-                    "Конфигурация загружена частично. DomainOk={DomainOk}, DatabaseOk={DatabaseOk}, PortOk={PortOk}, SchemeOk={SchemeOk}, RoleCacheOk={RoleCacheOk}, DbSchemaOk={DbSchemaOk}, CertificateOk={CertificateOk}. Class={Class}, Method={Method}",
-                    domain is not null, database is not null, portOk, schemeOk, roleCacheOk, dbSchemaOk, certificateOk, ClassName, method);
+                    "Конфигурация загружена частично. DomainOk={DomainOk}, DatabaseOk={DatabaseOk}, PortOk={PortOk}, SchemeOk={SchemeOk}, RoleCacheOk={RoleCacheOk}, DbSchemaOk={DbSchemaOk}, CookieConsentOk={CookieConsentOk}, CertificateOk={CertificateOk}. Class={Class}, Method={Method}",
+                    domain is not null, database is not null, portOk, schemeOk, roleCacheOk, dbSchemaOk, cookieConsentOk, certificateOk, ClassName, method);
                 return false;
             }
 
@@ -359,6 +371,7 @@ internal sealed class Data
             Scheme = null;
             RoleCacheOptions = null;
             DbSchemaOptions = null;
+            CookieConsentOptions = null;
             return false;
         }
     }
@@ -493,6 +506,34 @@ internal sealed class Data
         }
 
         return int.TryParse(value.Trim(), out int parsed) ? parsed : null;
+    }
+
+    /// <summary>
+    /// Читает параметр инфраструктуры согласия на обработку файлов cookie
+    /// через <see cref="WebShelf.Classes.Service.CookieConsentOptions.Create"/>
+    /// (ключ <c>cookieconsent</c> — включение баннера согласия, по умолчанию
+    /// выключен). Ключ опционален: его отсутствие — не ошибка конфигурации.
+    /// </summary>
+    /// <param name="config">Словарь конфигурации.</param>
+    /// <returns>
+    /// <see langword="true"/> при успешной инициализации; <see langword="false"/> —
+    /// только при исключении: конфигурация считается не загруженной (fail-secure).
+    /// </returns>
+    private bool InitCookieConsentOptions(Dictionary<string, string> config)
+    {
+        const string method = nameof(InitCookieConsentOptions);
+
+        try
+        {
+            CookieConsentOptions = CookieConsentOptions.Create(config);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Ошибка инициализации параметров согласия на обработку cookie. Class={Class}, Method={Method}", ClassName, method);
+            CookieConsentOptions = null;
+            return false;
+        }
     }
 
     /// <summary>

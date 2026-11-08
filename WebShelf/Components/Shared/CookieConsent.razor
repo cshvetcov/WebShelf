@@ -1,0 +1,151 @@
+﻿@* Баннер согласия на обработку файлов cookie — инфраструктура, по умолчанию ВЫКЛЮЧЕН.
+   Включается ключом cookieconsent=true в Server.conf (CookieConsentOptions).
+   Решение пользователя хранится в localStorage браузера (ключ ws-cookie-consent,
+   CookieConsent.razor.js) и на сервер не передаётся: при очистке данных сайта
+   решение удаляется и баннер спрашивает заново (отзыв согласия).
+   Пока система использует только технически необходимые cookie, баннер не нужен —
+   правовой анализ: WebShelfDocs/Решения в проекте/Обработка cookie.md. *@
+@implements IAsyncDisposable
+
+@using WebShelf.Classes.Service
+@using Serilog
+
+@inject Data AppData
+@inject IJSRuntime Js
+
+@if (bannerVisible)
+{
+    <div class="ws-cookie-consent" role="region" aria-label="Уведомление об использовании файлов cookie">
+        <p class="ws-cookie-consent-text">
+            Мы используем файлы cookie, необходимые для входа в систему и её защиты.
+            Необязательные файлы cookie (если появятся) будут установлены только
+            после вашего согласия. Подробнее — в
+            <a class="ws-cookie-consent-link" href="/cookie-policy.html">политике обработки файлов cookie</a>.
+        </p>
+        <div class="ws-cookie-consent-actions">
+            <button type="button" class="ws-btn-primary" @onclick="() => SaveDecisionAsync(true)">Принять</button>
+            <button type="button" class="ws-btn-secondary" @onclick="() => SaveDecisionAsync(false)">Отклонить</button>
+        </div>
+    </div>
+}
+
+@code {
+    private const string ClassName = "WebShelf.Components.Shared.CookieConsent";
+
+    /// <summary>
+    /// true — баннер согласия показан. Устанавливается в OnAfterRenderAsync:
+    /// проверка наличия сохранённого решения требует JS interop, до первого
+    /// интерактивного рендера баннер не показывается (пререндер ничего не рисует).
+    /// </summary>
+    private bool bannerVisible;
+
+    /// <summary>
+    /// ES-модуль CookieConsent.razor.js (JS-isolation): чтение и запись решения
+    /// пользователя о согласии в localStorage браузера (ключ ws-cookie-consent).
+    /// </summary>
+    private IJSObjectReference? _consentModule;
+
+    /// <summary>
+    /// После первого интерактивного рендера проверяет, включён ли баннер согласия
+    /// ключом cookieconsent, и есть ли у пользователя сохранённое решение.
+    /// Баннер показывается только при включённом ключе и отсутствии решения
+    /// (повторно решение не запрашивается). Проверка выполняется после рендера,
+    /// а не в OnInitialized: localStorage доступен только через JS interop.
+    /// </summary>
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        const string method = nameof(OnAfterRenderAsync);
+
+        if (!firstRender || bannerVisible)
+        {
+            return;
+        }
+
+        try
+        {
+            // Баннер выключен (по умолчанию): компонент не взаимодействует с JS
+            if (AppData.CookieConsentOptions?.BannerEnabled != true)
+            {
+                return;
+            }
+
+            _consentModule ??= await Js.InvokeAsync<IJSObjectReference>("import", "./Components/Shared/CookieConsent.razor.js");
+            bool hasDecision = await _consentModule.InvokeAsync<bool>("hasDecision");
+
+            if (!hasDecision)
+            {
+                bannerVisible = true;
+                StateHasChanged();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // Цепь Blazor разорвана — страница уходит.
+        }
+        catch (InvalidOperationException)
+        {
+            // Статический рендер — interop недоступен.
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
+        }
+    }
+
+    /// <summary>
+    /// Сохраняет решение пользователя (кнопки «Принять»/«Отклонить») и скрывает баннер.
+    /// Отказ не блокирует работу системы: технически необходимые cookie
+    /// (аутентификация, защита от CSRF) согласия не требуют; необязательные cookie
+    /// (когда появятся) обязаны проверять сохранённое решение перед установкой.
+    /// </summary>
+    /// <param name="accepted">true — согласие дано; false — отклонено.</param>
+    private async Task SaveDecisionAsync(bool accepted)
+    {
+        const string method = nameof(SaveDecisionAsync);
+
+        try
+        {
+            if (_consentModule is not null)
+            {
+                await _consentModule.InvokeVoidAsync("saveDecision", accepted);
+            }
+
+            bannerVisible = false;
+            StateHasChanged();
+        }
+        catch (JSDisconnectedException)
+        {
+            // Цепь Blazor разорвана — страница уходит.
+        }
+        catch (InvalidOperationException)
+        {
+            // Статический рендер — interop недоступен.
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
+        }
+    }
+
+    /// <summary>
+    /// Освобождает ссылку на импортированный JS-модуль.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (_consentModule is not null)
+        {
+            try
+            {
+                await _consentModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            _consentModule = null;
+        }
+    }
+}

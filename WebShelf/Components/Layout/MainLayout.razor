@@ -2,6 +2,14 @@
 
 @Body
 
+@* Футер сайта: статичная ссылка на политику обработки файлов cookie
+   (wwwroot/cookie-policy.html, документ не генерируется приложением) *@
+<SiteFooter />
+
+@* Баннер согласия на обработку cookie: инфраструктура, по умолчанию выключен —
+   включается ключом cookieconsent в Server.conf (см. Обработка cookie.md) *@
+<CookieConsent />
+
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.
     <a href="." class="reload">Reload</a>
