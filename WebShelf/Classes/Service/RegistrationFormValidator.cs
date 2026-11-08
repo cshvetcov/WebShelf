@@ -81,6 +81,31 @@ internal static partial class RegistrationFormValidator
     }
 
     /// <summary>
+    /// Проверяет готовность всей формы заявки к отправке: все поля обязательны
+    /// и должны быть корректны (фамилия, имя, отчество, e-mail, телефон
+    /// в формате +7 (XXX) XXX-XX-XX), согласие на обработку персональных
+    /// данных должно быть дано. Кнопка «Подать заявку» активна только
+    /// в этом состоянии: проверка перевычисляется при каждом вводе, поэтому
+    /// любое исправление, делающее форму некорректной (удаление данных,
+    /// неверный формат, снятие согласия), снова блокирует кнопку.
+    /// </summary>
+    /// <param name="lastName">Фамилия.</param>
+    /// <param name="firstName">Имя.</param>
+    /// <param name="patronymic">Отчество.</param>
+    /// <param name="email">Адрес электронной почты.</param>
+    /// <param name="phone">Номер телефона в формате +7 (XXX) XXX-XX-XX.</param>
+    /// <param name="consent"><see langword="true"/> — согласие на обработку
+    /// персональных данных дано.</param>
+    /// <returns><see langword="true"/> — форма заполнена корректно целиком.</returns>
+    internal static bool IsApplicationValid(string lastName, string firstName, string patronymic, string email, string phone, bool consent)
+        => IsValidName(lastName)
+           && IsValidName(firstName)
+           && IsValidName(patronymic)
+           && IsValidEmail(email)
+           && IsValidPhone(phone)
+           && consent;
+
+    /// <summary>
     /// Ошибка поля «Фамилия»/«Имя»/«Отчество».
     /// </summary>
     /// <param name="value">Введённое значение.</param>

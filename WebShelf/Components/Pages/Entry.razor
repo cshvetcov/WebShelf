@@ -17,6 +17,7 @@
 @inject IJSRuntime Js
 @inject LoginGuard LoginGuard
 @inject RegistrationPermitChecker PermitChecker
+@inject PermitActivationGuard PermitGuard
 
 <PageTitle>Вход в систему WebShelf</PageTitle>
 
@@ -97,13 +98,11 @@
         </button>
 
         @* type="button": форма POST-ит на /account/login, клик не должен её отправлять.
-           Кнопка блокируется на 15 с после неудачной проверки пермита
-           (CountdownLockout, обратный отсчёт в тексте кнопки) *@
-        <button type="button" class="ws-btn-secondary" @onclick="OpenPermitActivation" disabled="@registrationLockout.IsLocked">
-            @(registrationLockout.IsLocked
-                ? $"Регистрация доступна через {registrationLockout.RemainingSeconds} с."
-                : "Зарегистрироваться")
-        </button>
+           Кнопка просто открывает окно «Активация разрешения» и ничего
+           не блокирует: неудачные проверки пермита обрабатываются в самом
+           окне активации (сообщение + блокировка с обратным отсчётом),
+           форма входа не затрагивается *@
+        <button type="button" class="ws-btn-secondary" @onclick="OpenPermitActivation">Зарегистрироваться</button>
 
         @if (isLocked)
         {
@@ -125,8 +124,14 @@ else if (currentWindow == EntryWindow.PermitActivation)
        и стили window.css). Закрытие кнопкой «×» возвращает на окно входа через OnClose.
        Кнопка «Продолжить» проверяет пермит в БД (RegistrationPermitChecker):
        пермит найден и счётчик регистраций больше нуля — открывается окно подачи
-       заявки, иначе пользователь возвращается на окно входа с блокировкой кнопки
-       «Зарегистрироваться» на 15 с. *@
+       заявки; неверный или исчерпанный пермит оставляет окно открытым — поведение
+       как при неверной паре логин/пароль на форме входа, но блокировка с обратным
+       отсчётом включается уже после первой неудачной попытки. Красное сообщение
+       о неверном пермите не показывается: его заменяет оранжевый блок с таймером
+       под кнопкой (оформление как на форме входа). Длительность и момент окончания
+       блокировки хранит серверный PermitActivationGuard (первая неудача — 15 с,
+       каждая следующая вдвое дольше, до предела 15 минут): обновление страницы
+       и переоткрытие окна не сбрасывают отсчёт. *@
     <AppWindow Title="Активация разрешения — WebShelf"
                IconText="WS"
                CanClose="true"
@@ -141,22 +146,34 @@ else if (currentWindow == EntryWindow.PermitActivation)
                        placeholder="Введите ключ разрешения"
                        required
                        autocomplete="off"
-                       disabled="@isCheckingPermit"
+                       disabled="@(isCheckingPermit || permitLockout.IsLocked)"
                        @bind="permitValue"
                        @bind:event="oninput" />
             </div>
         </div>
 
-        @* Ошибка сервера при проверке пермита: окно остаётся открытым,
-           повторная попытка возможна сразу *@
-        @if (!string.IsNullOrEmpty(permitErrorMessage))
+        <button type="button" class="ws-btn-primary" @onclick="SubmitPermitAsync" disabled="@(isCheckingPermit || permitLockout.IsLocked)">
+            @(isCheckingPermit
+                ? "Проверка пермита..."
+                : permitLockout.IsLocked ? "Активация временно заблокирована" : "Продолжить")
+        </button>
+
+        @* Блокировка после неудачной проверки пермита: оранжевый блок с остатком
+           секунд ПОД кнопкой — как на форме входа. Красное сообщение о неверном
+           пермите не выводится: таймер включается уже после первой неудачной
+           попытки и сам объясняет причину. Отсчёт переживает обновление страницы —
+           состояние хранит серверный PermitActivationGuard *@
+        @if (permitLockout.IsLocked)
         {
+            <div class="ws-message ws-message-lockout" role="alert">
+                Повторите попытку активации через <strong>@permitLockout.RemainingSeconds</strong> с.
+            </div>
+        }
+        else if (!string.IsNullOrEmpty(permitErrorMessage))
+        {
+            @* Сообщение о пустом вводе или ошибке сервера (без блокировки) *@
             <div class="ws-message ws-message-error" role="alert">@permitErrorMessage</div>
         }
-
-        <button type="button" class="ws-btn-primary" @onclick="SubmitPermitAsync" disabled="@isCheckingPermit">
-            @(isCheckingPermit ? "Проверка пермита..." : "Продолжить")
-        </button>
     </AppWindow>
 }
 else
@@ -205,14 +222,16 @@ else
     private EntryWindow currentWindow = EntryWindow.Login;
 
     /// <summary>
-    /// Значение поля «Пермит». Не сохраняется при смене окон: возврат
-    /// на окно входа и обратно сбрасывает ввод.
+    /// Значение поля «Пермит». Не сохраняется при смене окон и после проверки:
+    /// возврат на окно входа и обратно, а также нажатие «Продолжить»
+    /// сбрасывают ввод.
     /// </summary>
     private string permitValue = string.Empty;
 
     /// <summary>
-    /// Сообщение об ошибке сервера при проверке пермита (показывается
-    /// в окне активации; пустое — ошибки нет).
+    /// Сообщение об ошибке проверки пермита: пустой ввод или ошибка сервера
+    /// (показывается в окне активации; пустое — ошибки нет). Неверный пермит
+    /// сообщения не даёт — его заменяет блокировка с таймером.
     /// </summary>
     private string permitErrorMessage = string.Empty;
 
@@ -223,21 +242,28 @@ else
     private bool isCheckingPermit;
 
     /// <summary>
-    /// Длительность блокировки кнопки «Зарегистрироваться» после
-    /// неудачной проверки пермита, секунд.
+    /// Отображаемый остаток блокировки окна «Активация разрешения»
+    /// (CountdownLockout). Длительность и момент окончания хранит серверный
+    /// PermitActivationGuard: первая неудачная проверка пермита блокирует окно
+    /// на 15 с, каждая следующая удваивает длительность (до предела 15 минут);
+    /// обновление страницы не сбрасывает отсчёт. Оформление — как у блокировки
+    /// формы входа: поле и кнопка «Продолжить» заблокированы, под кнопкой —
+    /// оранжевый блок ws-message-lockout с остатком секунд.
     /// </summary>
-    private const int RegistrationLockoutSeconds = 15;
+    private readonly CountdownLockout permitLockout = new();
 
     /// <summary>
-    /// Блокировка кнопки «Зарегистрироваться» после неудачной проверки
-    /// пермита: 15 секунд с обратным отсчётом (CountdownLockout).
+    /// IP-адрес клиента для учёта блокировки активации разрешения
+    /// (PermitActivationGuard): берётся из запроса цепи Blazor (как для
+    /// LoginGuard в OnInitializedAsync); при недоступности — «unknown».
     /// </summary>
-    private readonly CountdownLockout registrationLockout = new();
+    private string ClientIp =>
+        HttpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
     /// <summary>
-    /// Таймер обратного отсчёта блокировки кнопки «Зарегистрироваться».
+    /// Таймер обратного отсчёта блокировки окна «Активация разрешения».
     /// </summary>
-    private System.Threading.Timer? _registrationLockoutTimer;
+    private System.Threading.Timer? _permitLockoutTimer;
 
     /// <summary>
     /// true, если токен не удалось получить из HttpContext — тогда OnAfterRenderAsync
@@ -377,18 +403,52 @@ else
 
     /// <summary>
     /// Открывает окно «Активация разрешения» вместо окна «Вход в систему»
-    /// (кнопка «Зарегистрироваться» на форме входа). При активной блокировке
-    /// не вызывается: кнопка заблокирована.
+    /// (кнопка «Зарегистрироваться» на форме входа) и синхронизирует отсчёт
+    /// блокировки с сервером: после обновления страницы (новая цепь Blazor
+    /// с пустым CountdownLockout) и при повторном открытии окна отсчёт
+    /// продолжается с тем же остатком.
     /// </summary>
     private void OpenPermitActivation()
     {
         currentWindow = EntryWindow.PermitActivation;
+        SyncPermitLockoutFromGuard();
+    }
+
+    /// <summary>
+    /// Синхронизирует локальный отсчёт блокировки окна «Активация разрешения»
+    /// с серверным PermitActivationGuard: сервер хранит момент окончания
+    /// блокировки и её номер (эскалация длительности) и является источником
+    /// истины. Заблокировано — отсчёт продолжается с серверного остатка;
+    /// не заблокировано — локальный остаток сбрасывается (страховка от
+    /// рассинхронизации после длительного простоя окна закрытым).
+    /// </summary>
+    private void SyncPermitLockoutFromGuard()
+    {
+        try
+        {
+            if (PermitGuard.IsLocked(ClientIp, out int remaining) && remaining > 0)
+            {
+                StartPermitLockout(remaining);
+            }
+            else
+            {
+                permitLockout.Start(0);
+                _permitLockoutTimer?.Dispose();
+                _permitLockoutTimer = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(SyncPermitLockoutFromGuard));
+        }
     }
 
     /// <summary>
     /// Возвращает пользователя на окно «Вход в систему»: колбэк закрытия
     /// окна «Активация разрешения» (AppWindow.OnClose → JS NotifyClosedAsync).
-    /// Введённый пермит сбрасывается.
+    /// Введённый пермит сбрасывается. Активная блокировка сохраняется:
+    /// отсчёт живёт на сервере (PermitActivationGuard), при повторном открытии
+    /// окна он продолжается с того же остатка.
     /// </summary>
     private void ClosePermitActivation()
     {
@@ -411,17 +471,40 @@ else
     /// <summary>
     /// Обрабатывает нажатие «Продолжить»: проверяет пермит в БД
     /// (RegistrationPermitChecker). Пермит найден и счётчик регистраций
-    /// больше нуля — открывается окно подачи заявки; иначе пользователь
-    /// возвращается на окно входа, а кнопка «Зарегистрироваться»
-    /// блокируется на 15 с с обратным отсчётом. Ошибки сервера не
-    /// списываются на пользователя: окно остаётся открытым с сообщением.
+    /// больше нуля — открывается окно подачи заявки (эскалация блокировок
+    /// сбрасывается). Неверный или исчерпанный пермит не уводит пользователя
+    /// с окна: поведение как при неверной паре логин/пароль на форме входа —
+    /// блокировка с обратным отсчётом уже после первой неудачной попытки
+    /// (PermitCheckOutcome), без красного сообщения: оранжевый блок с таймером
+    /// под кнопкой. Длительность блокировки (15 с, удвоение за каждую следующую
+    /// неудачу до предела 15 минут) хранит серверный PermitActivationGuard —
+    /// обновление страницы не сбрасывает отсчёт. Пустое значение и ошибки
+    /// сервера не списываются на пользователя: сообщение без блокировки.
     /// </summary>
     private async Task SubmitPermitAsync()
     {
         const string method = nameof(SubmitPermitAsync);
 
-        if (isCheckingPermit)
+        if (isCheckingPermit || permitLockout.IsLocked)
         {
+            return;
+        }
+
+        // Страховка от рассинхронизации с сервером (например, вторая вкладка
+        // с того же IP уже заблокировала активацию): серверная блокировка
+        // проверяется до обращения к БД, отсчёт продолжается с остатка сервера
+        if (PermitGuard.IsLocked(ClientIp, out int serverRemaining) && serverRemaining > 0)
+        {
+            StartPermitLockout(serverRemaining);
+            return;
+        }
+
+        // Пустой ввод не проверяется в БД и не включает блокировку —
+        // как пустая пара логин/пароль на форме входа (required не
+        // пропускает пустую отправку до проверки)
+        if (string.IsNullOrWhiteSpace(permitValue))
+        {
+            ApplyPermitOutcome(PermitCheckOutcome.FromEmptyInput());
             return;
         }
 
@@ -432,19 +515,22 @@ else
         {
             RegistrationPermitCheckResult result = await PermitChecker.CheckAsync(permitValue);
 
-            // Введённый пермит не сохраняется при смене окна
+            // Введённый пермит не сохраняется при смене окна и после проверки
             permitValue = string.Empty;
 
             if (result.IsUsable)
             {
+                // Успешная активация сбрасывает блокировки и эскалацию —
+                // как RecordSuccess у LoginGuard после успешного входа
+                PermitGuard.RecordSuccess(ClientIp);
                 currentWindow = EntryWindow.RegistrationApplication;
             }
             else
             {
-                // Пермит не найден или исчерпан: возврат на окно входа
-                // с блокировкой кнопки «Зарегистрироваться»
-                currentWindow = EntryWindow.Login;
-                StartRegistrationLockout();
+                // Пермит не найден или исчерпан: окно остаётся открытым —
+                // блокировка с обратным отсчётом (без красного сообщения:
+                // таймер включается сразу и заменяет его)
+                ApplyPermitOutcome(PermitCheckOutcome.FromResult(result));
             }
         }
         catch (OperationCanceledException ex)
@@ -454,7 +540,7 @@ else
         catch (Exception ex)
         {
             Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
-            permitErrorMessage = "Ошибка сервера при проверке пермита. Повторите попытку.";
+            ApplyPermitOutcome(PermitCheckOutcome.FromServerError());
         }
         finally
         {
@@ -463,40 +549,63 @@ else
     }
 
     /// <summary>
-    /// Запускает обратный отсчёт блокировки кнопки «Зарегистрироваться»
-    /// после неудачной проверки пермита (15 с).
+    /// Применяет решение по проверке пермита к окну «Активация разрешения»:
+    /// показывает сообщение (пустой ввод, ошибка сервера) и при необходимости
+    /// фиксирует неудачу на сервере — PermitActivationGuard.RecordFailure
+    /// устанавливает блокировку уже после первой попытки и удваивает длительность
+    /// каждой следующей (до 15 минут), а возвращённый остаток запускает
+    /// обратный отсчёт в интерфейсе.
     /// </summary>
-    private void StartRegistrationLockout()
+    /// <param name="outcome">Решение по проверке пермита (PermitCheckOutcome).</param>
+    private void ApplyPermitOutcome(PermitCheckOutcome outcome)
     {
-        try
-        {
-            registrationLockout.Start(RegistrationLockoutSeconds);
+        permitErrorMessage = outcome.ErrorMessage ?? string.Empty;
 
-            _registrationLockoutTimer?.Dispose();
-            _registrationLockoutTimer = new System.Threading.Timer(_ => _ = TickRegistrationLockoutAsync(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
-        }
-        catch (Exception ex)
+        if (outcome.StartLockout)
         {
-            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(StartRegistrationLockout));
+            int seconds = PermitGuard.RecordFailure(ClientIp);
+            StartPermitLockout(seconds > 0 ? seconds : PermitActivationGuard.BaseLockoutSeconds);
         }
     }
 
     /// <summary>
-    /// Один тик обратного отсчёта блокировки кнопки «Зарегистрироваться».
+    /// Запускает (или перезапускает) обратный отсчёт блокировки окна
+    /// «Активация разрешения» на заданное число секунд: после неудачной
+    /// проверки пермита — с серверной длительностью (эскалация удвоением),
+    /// при открытии окна — с серверного остатка.
+    /// </summary>
+    /// <param name="seconds">Число секунд блокировки (остаток с сервера).</param>
+    private void StartPermitLockout(int seconds)
+    {
+        try
+        {
+            permitLockout.Start(Math.Max(1, seconds));
+
+            _permitLockoutTimer?.Dispose();
+            _permitLockoutTimer = new System.Threading.Timer(_ => _ = TickPermitLockoutAsync(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(StartPermitLockout));
+        }
+    }
+
+    /// <summary>
+    /// Один тик обратного отсчёта блокировки окна «Активация разрешения».
     /// Асинхронный вызов выделен из колбэка таймера: задача не отбрасывается
     /// молча — все исключения наблюдаются и логируются (как в TickLockoutAsync).
     /// </summary>
-    private async Task TickRegistrationLockoutAsync()
+    private async Task TickPermitLockoutAsync()
     {
         try
         {
             await InvokeAsync(() =>
             {
-                registrationLockout.Tick();
-                if (!registrationLockout.IsLocked)
+                permitLockout.Tick();
+                if (!permitLockout.IsLocked)
                 {
-                    _registrationLockoutTimer?.Dispose();
-                    _registrationLockoutTimer = null;
+                    _permitLockoutTimer?.Dispose();
+                    _permitLockoutTimer = null;
                 }
                 StateHasChanged();
             });
@@ -504,12 +613,12 @@ else
         catch (JSDisconnectedException)
         {
             // Цепь Blazor разорвана — страница уходит, отсчёт больше не нужен.
-            _registrationLockoutTimer?.Dispose();
-            _registrationLockoutTimer = null;
+            _permitLockoutTimer?.Dispose();
+            _permitLockoutTimer = null;
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(TickRegistrationLockoutAsync));
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, nameof(TickPermitLockoutAsync));
         }
     }
 
@@ -569,15 +678,15 @@ else
     }
 
     /// <summary>
-    /// Освобождает таймер блокировки и ссылку на импортированный JS-модуль.
+    /// Освобождает таймеры блокировки и ссылку на импортированный JS-модуль.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
         _lockoutTimer?.Dispose();
         _lockoutTimer = null;
 
-        _registrationLockoutTimer?.Dispose();
-        _registrationLockoutTimer = null;
+        _permitLockoutTimer?.Dispose();
+        _permitLockoutTimer = null;
 
         if (_windowModule is not null)
         {

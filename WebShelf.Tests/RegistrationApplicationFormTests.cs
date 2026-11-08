@@ -10,10 +10,12 @@ namespace WebShelf.Tests;
 /// <summary>
 /// Тесты формы заявки на регистрацию (RegistrationApplicationForm):
 /// состав обязательных полей, маска телефона, чек-бокс согласия со ссылкой
-/// на политику обработки персональных данных и кнопка «Подать заявку»
-/// (заглушка без обработчика — по задаче поведение при нажатии отсутствует).
-/// Рендер выполняется через HtmlRenderer (статический SSR): проверяется
-/// исходная разметка до касания полей (ошибки валидации не показываются).
+/// на политику обработки персональных данных и кнопка «Подать заявку» —
+/// по умолчанию неактивна, включается только при полностью корректной
+/// форме (RegistrationFormValidator.IsApplicationValid); обработка
+/// нажатия по задаче отсутствует. Рендер выполняется через HtmlRenderer
+/// (статический SSR): проверяется исходная разметка до касания полей
+/// (ошибки валидации не показываются).
 /// </summary>
 public class RegistrationApplicationFormTests
 {
@@ -103,17 +105,32 @@ public class RegistrationApplicationFormTests
     }
 
     /// <summary>
-    /// Кнопка «Подать заявку» присутствует, но не отправляет форму:
-    /// type="button" и без обработчика (по задаче поведение при нажатии
-    /// отсутствует — обработка отправки появится вместе с логикой регистрации).
+    /// Кнопка «Подать заявку» по умолчанию неактивна: включается только
+    /// когда вся форма заполнена корректно (все поля валидны и дано
+    /// согласие). В исходном (пустом) состоянии формы кнопка заблокирована
+    /// атрибутом disabled.
     /// </summary>
     [Fact]
-    public async Task Render_Form_SubmitButtonIsStubWithoutHandler()
+    public async Task Render_Form_SubmitButtonDisabledWhenFormEmpty()
     {
         string html = await RenderFormAsync();
 
         Assert.Contains("Подать заявку", html);
-        Assert.Contains("<button type=\"button\" class=\"ws-btn-primary\">Подать заявку</button>", html);
+        Assert.Contains("<button type=\"button\" class=\"ws-btn-primary\" disabled>Подать заявку</button>", html);
+    }
+
+    /// <summary>
+    /// Кнопка «Подать заявку» не отправляет форму: type="button" и без
+    /// обработчика (по задаче поведение при нажатии отсутствует — обработка
+    /// отправки появится вместе с логикой регистрации).
+    /// </summary>
+    [Fact]
+    public async Task Render_Form_SubmitButtonIsButtonNotSubmit()
+    {
+        string html = await RenderFormAsync();
+
+        Assert.Contains("type=\"button\"", html);
+        Assert.DoesNotContain("type=\"submit\"", html);
     }
 
     /// <summary>

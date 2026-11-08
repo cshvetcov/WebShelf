@@ -5,9 +5,13 @@
    по мере ввода (RegistrationFormValidator): телефон укладывается в маску,
    ошибки появляются под полями после первого касания (blur) и обновляются
    при каждом вводе.
-   По задаче кнопка «Подать заявку» не выполняет действий — обработка
-   отправки появится вместе с логикой регистрации (аналогично заглушке
-   кнопки «Продолжить» окна активации разрешения).
+   Кнопка «Подать заявку» по умолчанию неактивна и включается только когда
+   вся форма заполнена корректно (RegistrationFormValidator.IsApplicationValid):
+   состояние перевычисляется при каждом вводе, поэтому любое изменение данных,
+   делающее форму некорректной (удаление данных, неверный формат, снятие
+   согласия), снова блокирует кнопку. По задаче кнопка не выполняет действий —
+   обработка отправки появится вместе с логикой регистрации (аналогично
+   бывшей заглушке кнопки «Продолжить» окна активации разрешения).
    Ссылка согласия ведёт на статичную страницу /personal-data-policy.html
    и открывается в новой вкладке: уход со страницы оборвал бы цепь Blazor
    и введённые данные заявки потерялись бы. *@
@@ -24,6 +28,7 @@
                autocomplete="family-name"
                class="@(InputClass(LastNameError))"
                @bind="lastName"
+               @bind:event="oninput"
                @onblur="MarkLastNameTouched" />
     </div>
     @if (LastNameError is not null)
@@ -42,6 +47,7 @@
                autocomplete="given-name"
                class="@(InputClass(FirstNameError))"
                @bind="firstName"
+               @bind:event="oninput"
                @onblur="MarkFirstNameTouched" />
     </div>
     @if (FirstNameError is not null)
@@ -60,6 +66,7 @@
                autocomplete="additional-name"
                class="@(InputClass(PatronymicError))"
                @bind="patronymic"
+               @bind:event="oninput"
                @onblur="MarkPatronymicTouched" />
     </div>
     @if (PatronymicError is not null)
@@ -79,6 +86,7 @@
                inputmode="email"
                class="@(InputClass(EmailError))"
                @bind="email"
+               @bind:event="oninput"
                @onblur="MarkEmailTouched" />
     </div>
     @if (EmailError is not null)
@@ -130,9 +138,13 @@
     <div class="ws-field-error" role="alert">@ConsentError</div>
 }
 
-@* Заглушка по задаче: кнопка не выполняет действий — обработка отправки
-   заявки появится вместе с логикой регистрации *@
-<button type="button" class="ws-btn-primary">Подать заявку</button>
+@* По умолчанию неактивна: включается только при полностью корректной форме
+   (все поля валидны и дано согласие, IsApplicationValid). Состояние кнопки
+   перевычисляется при каждом вводе, поэтому исправление, делающее данные
+   некорректными (удаление, неверный формат, снятие галочки), снова её
+   блокирует. По задаче обработка нажатия отсутствует — она появится вместе
+   с логикой регистрации *@
+<button type="button" class="ws-btn-primary" disabled="@(!IsFormValid)">Подать заявку</button>
 
 @code {
     /// <summary>Значение поля «Фамилия».</summary>
@@ -187,6 +199,16 @@
     /// <summary>Ошибка чек-бокса согласия; null — ошибки нет.</summary>
     private string? ConsentError =>
         consentTouched ? RegistrationFormValidator.ConsentError(consent) : null;
+
+    /// <summary>
+    /// true — вся форма заполнена корректно: все поля валидны и дано согласие
+    /// на обработку персональных данных (RegistrationFormValidator.
+    /// IsApplicationValid). Кнопка «Подать заявку» активна только в этом
+    /// состоянии: свойство перевычисляется при каждом вводе, поэтому любое
+    /// исправление, делающее форму некорректной, снова блокирует кнопку.
+    /// </summary>
+    private bool IsFormValid =>
+        RegistrationFormValidator.IsApplicationValid(lastName, firstName, patronymic, email, phone, consent);
 
     /// <summary>
     /// После каждого ввода телефона укладывает введённые цифры в маску

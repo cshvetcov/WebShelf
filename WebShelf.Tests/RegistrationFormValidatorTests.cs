@@ -118,6 +118,99 @@ public class RegistrationFormValidatorTests
         Assert.False(RegistrationFormValidator.IsValidPhone(value));
     }
 
+    // --- IsApplicationValid: готовность всей формы (кнопка «Подать заявку») ---
+
+    /// <summary>
+    /// Валидные данные всех полей и дано согласие — форма готова:
+    /// кнопка «Подать заявку» активна.
+    /// </summary>
+    [Fact]
+    public void IsApplicationValid_AllFieldsValidAndConsent_True()
+    {
+        bool valid = RegistrationFormValidator.IsApplicationValid(
+            "Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true);
+
+        Assert.True(valid);
+    }
+
+    /// <summary>
+    /// Все поля валидны, но согласие не дано (снята галочка чек-бокса) —
+    /// форма не готова: кнопка деактивируется.
+    /// </summary>
+    [Fact]
+    public void IsApplicationValid_ConsentNotGiven_False()
+    {
+        bool valid = RegistrationFormValidator.IsApplicationValid(
+            "Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", false);
+
+        Assert.False(valid);
+    }
+
+    /// <summary>
+    /// Пустая форма (исходное состояние) — не готова: кнопка «Подать заявку»
+    /// по умолчанию неактивна.
+    /// </summary>
+    [Fact]
+    public void IsApplicationValid_EmptyForm_False()
+    {
+        bool valid = RegistrationFormValidator.IsApplicationValid(
+            string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, false);
+
+        Assert.False(valid);
+    }
+
+    /// <summary>
+    /// Удаление данных любого одного поля делает форму некорректной —
+    /// кнопка деактивируется (каждая позиция по очереди заменяется пустой).
+    /// </summary>
+    [Theory]
+    [InlineData("", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true)]
+    [InlineData("Иванов", "", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true)]
+    [InlineData("Иванов", "Иван", "", "user@mail.ru", "+7 (999) 123-45-67", true)]
+    [InlineData("Иванов", "Иван", "Иванович", "", "+7 (999) 123-45-67", true)]
+    [InlineData("Иванов", "Иван", "Иванович", "user@mail.ru", "", true)]
+    public void IsApplicationValid_AnyFieldCleared_False(
+        string lastName, string firstName, string patronymic, string email, string phone, bool consent)
+    {
+        bool valid = RegistrationFormValidator.IsApplicationValid(
+            lastName, firstName, patronymic, email, phone, consent);
+
+        Assert.False(valid);
+    }
+
+    /// <summary>
+    /// Приведение любого поля к неправильному формату (цифры в ФИО, битый
+    /// e-mail, неполный телефон) деактивирует кнопку на ранее заполненной
+    /// валидной форме.
+    /// </summary>
+    [Theory]
+    [InlineData("Иванов1", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true)]
+    [InlineData("Иванов", "Иван1", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true)]
+    [InlineData("Иванов", "Иван", "Иванович1", "user@mail.ru", "+7 (999) 123-45-67", true)]
+    [InlineData("Иванов", "Иван", "Иванович", "user@mail", "+7 (999) 123-45-67", true)]
+    [InlineData("Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-6", true)]
+    public void IsApplicationValid_AnyFieldInvalidFormat_False(
+        string lastName, string firstName, string patronymic, string email, string phone, bool consent)
+    {
+        bool valid = RegistrationFormValidator.IsApplicationValid(
+            lastName, firstName, patronymic, email, phone, consent);
+
+        Assert.False(valid);
+    }
+
+    /// <summary>
+    /// Пробелы по краям не портят валидность: значения полей нормализуются
+    /// обрезкой, как при последующей отправке.
+    /// </summary>
+    [Fact]
+    public void IsApplicationValid_TrailingSpacesInFields_True()
+    {
+        bool valid = RegistrationFormValidator.IsApplicationValid(
+            " Иванов ", " Иван ", " Иванович ", " user@mail.ru ", " +7 (999) 123-45-67 ", true);
+
+        Assert.True(valid);
+    }
+
     // --- Тексты ошибок ---
 
     [Theory]

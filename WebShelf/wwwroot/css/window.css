@@ -233,7 +233,8 @@ body.ws-window-page {
     justify-content: center;
 }
 
-    .ws-toggle-password:hover {
+    /* Заблокированная кнопка глаза не подсвечивается при наведении */
+    .ws-toggle-password:not(:disabled):hover {
         color: rgba(255, 255, 255, 0.9);
     }
 
@@ -264,18 +265,23 @@ body.ws-window-page {
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
 }
 
-    .ws-btn-primary:hover {
+    /* Реакции наведения/нажатия — только для активной кнопки (:not(:disabled)):
+       заблокированная кнопка не реагирует на нажатие визуально — ни подсветкой,
+       ни сжатием; transform:none дополнительно страхует от :active в старых
+       браузерах */
+    .ws-btn-primary:not(:disabled):hover {
         background-color: #0C6A7A;
         box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
     }
 
-    .ws-btn-primary:active {
+    .ws-btn-primary:not(:disabled):active {
         transform: scale(0.98);
     }
 
     .ws-btn-primary:disabled {
         opacity: 0.55;
         cursor: not-allowed;
+        transform: none;
     }
 
 /* Вторичная кнопка действия (ghost): прозрачный фон + светлая граница.
@@ -295,13 +301,20 @@ body.ws-window-page {
     transition: background 0.2s, border-color 0.2s, transform 0.15s;
 }
 
-    .ws-btn-secondary:hover {
+    .ws-btn-secondary:not(:disabled):hover {
         background: rgba(255, 255, 255, 0.08);
         border-color: rgba(255, 255, 255, 0.55);
     }
 
-    .ws-btn-secondary:active {
+    .ws-btn-secondary:not(:disabled):active {
         transform: scale(0.98);
+    }
+
+    /* Заблокированная вторичная кнопка не реагирует на нажатие — как ws-btn-primary */
+    .ws-btn-secondary:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        transform: none;
     }
 
 /* Сообщения */
@@ -347,6 +360,12 @@ body.ws-window-page {
         accent-color: #0A5966;
         cursor: pointer;
     }
+
+        /* Заблокированный чек-бокс (блокировка формы входа) не показывает
+           курсор-руку — единое правило «заблокированное не реагирует» */
+        .ws-form-check input[type="checkbox"]:disabled {
+            cursor: not-allowed;
+        }
 
 /* Чекбокс согласия на обработку персональных данных (форма заявки
    на регистрацию): длинная подпись выравнивается по верхнему краю
