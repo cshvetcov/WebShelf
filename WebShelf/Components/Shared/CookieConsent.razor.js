@@ -8,7 +8,8 @@
  * согласия (баннер спросит решение заново).
  *
  * API (вызывается из Blazor через JS interop):
- *   hasDecision() — есть ли сохранённое решение (boolean)
+ *   hasDecision() — есть ли действующее сохранённое решение (boolean):
+ *     запись с несовпадающей версией CONSENT_VERSION не учитывается
  *   saveDecision(accepted) — записать решение (boolean)
  *   getDecision() — прочитать решение: null | { accepted, date, version }
  *   resetDecision() — удалить решение (принудительный повторный запрос)
@@ -54,11 +55,15 @@ function writeRaw(value) {
 }
 
 /**
- * Проверяет наличие сохранённого решения о согласии.
- * @returns {boolean} true, если решение сохранено.
+ * Проверяет наличие действующего сохранённого решения о согласии.
+ * Делегирует getDecision(): запись с несовпадающей версией
+ * CONSENT_VERSION (повреждённая или оставшаяся от старой версии формата)
+ * решением не считается — баннер запросит согласие заново, как описано
+ * в WebShelfDocs/Решения в проекте/Обработка cookie.md.
+ * @returns {boolean} true, если действующее решение сохранено.
  */
 export function hasDecision() {
-    return readRaw() !== null;
+    return getDecision() !== null;
 }
 
 /**

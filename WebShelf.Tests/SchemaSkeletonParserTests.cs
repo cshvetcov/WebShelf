@@ -272,7 +272,14 @@ public class SchemaSkeletonParserTests
 
         Assert.Equal(64, skeleton.Sha256Hash.Length);
         Assert.Equal(Schema, skeleton.Manifest.SchemaName);
-        Assert.Empty(skeleton.Manifest.Tables);
+
+        // Реальный каркас содержит таблицы схемы (с 2753142 — пермиты и заявки
+        // на регистрацию): манифест обязан быть непустым и включать их.
+        // Assert.Contains, а не точный список: каркас развивается вместе со схемой,
+        // добавление новых таблиц не должно ломать тест.
+        Assert.NotEmpty(skeleton.Manifest.Tables);
+        Assert.Contains(skeleton.Manifest.Tables, table => table.Name == "registration_permits");
+        Assert.Contains(skeleton.Manifest.Tables, table => table.Name == "registration_requests");
 
         string expectedHash = Convert.ToHexString(
             System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(skeleton.SqlText)))

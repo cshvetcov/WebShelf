@@ -1,5 +1,9 @@
 ﻿@inherits LayoutComponentBase
 
+@using WebShelf.Classes.Service
+
+@inject Data AppData
+
 @Body
 
 @* Футер сайта: статичная ссылка на политику обработки файлов cookie
@@ -7,11 +11,37 @@
 <SiteFooter />
 
 @* Баннер согласия на обработку cookie: инфраструктура, по умолчанию выключен —
-   включается ключом cookieconsent в Server.conf (см. Обработка cookie.md) *@
-<CookieConsent />
+   включается ключом cookieconsent в Server.conf (см. Обработка cookie.md).
+   Режим рендера задаётся точечно, на экземпляре компонента (ConsentRenderMode):
+   баннер читает сохранённое решение из localStorage через JS interop
+   (OnAfterRenderAsync), а JS interop недоступен в статическом рендере.
+   Layout рендерится RouteView статически: интерактивная граница страницы
+   (@rendermode в Entry.razor и других страницах) охватывает только саму
+   страницу и её дочерние компоненты, но не layout. Поэтому без собственного
+   режима рендера исключение статического рендера перехватывается в
+   CookieConsent, баннер молча остаётся скрытым, а модуль
+   CookieConsent.razor.js не запрашивается вовсе. С InteractiveServer
+   компонент пререндерится вместе со страницей и активируется в общем
+   серверном контуре (circuit) после загрузки blazor.web.js. При выключенном
+   ключе режим равен null (статический рендер) — компонент не обращается
+   к JS и не создаёт цепочек interop. *@
+<CookieConsent @rendermode="ConsentRenderMode" />
 
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.
     <a href="." class="reload">Reload</a>
     <span class="dismiss">🗙</span>
 </div>
+
+@code {
+    /// <summary>
+    /// Режим рендера баннера согласия на обработку cookie:
+    /// <c>InteractiveServer</c> при включённом ключе <c>cookieconsent</c>,
+    /// <see langword="null"/> (статический рендер) — при выключенном.
+    /// Чтение решения пользователя из localStorage требует JS interop,
+    /// поэтому включённому баннеру нужен интерактивный режим;
+    /// выключенный баннер остаётся статическим и не участвует в circuit.
+    /// </summary>
+    private IComponentRenderMode? ConsentRenderMode =>
+        AppData.CookieConsentOptions?.BannerEnabled == true ? InteractiveServer : null;
+}

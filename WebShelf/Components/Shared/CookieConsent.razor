@@ -78,13 +78,19 @@
                 StateHasChanged();
             }
         }
-        catch (JSDisconnectedException)
+        catch (JSDisconnectedException ex)
         {
             // Цепь Blazor разорвана — страница уходит.
+            Log.Debug(ex, "Цепь Blazor разорвана — проверка решения не выполнена. Class={Class}, Method={Method}",
+                ClassName, method);
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            // Статический рендер — interop недоступен.
+            // Статический рендер/пререндер — interop недоступен. Ожидаемо при
+            // пререндере: после подключения circuit OnAfterRenderAsync выполнится
+            // повторно уже с рабочим interop (режим рендера задаётся в MainLayout).
+            Log.Debug(ex, "JS interop недоступен (статический рендер/пререндер). Class={Class}, Method={Method}",
+                ClassName, method);
         }
         catch (Exception ex)
         {
@@ -113,13 +119,17 @@
             bannerVisible = false;
             StateHasChanged();
         }
-        catch (JSDisconnectedException)
+        catch (JSDisconnectedException ex)
         {
             // Цепь Blazor разорвана — страница уходит.
+            Log.Debug(ex, "Цепь Blazor разорвана — решение не сохранено. Class={Class}, Method={Method}",
+                ClassName, method);
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
             // Статический рендер — interop недоступен.
+            Log.Debug(ex, "JS interop недоступен (статический рендер) — решение не сохранено. Class={Class}, Method={Method}",
+                ClassName, method);
         }
         catch (Exception ex)
         {
