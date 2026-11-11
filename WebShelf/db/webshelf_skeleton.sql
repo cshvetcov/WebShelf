@@ -1,5 +1,5 @@
 -- WebShelf: файл-каркас структуры БД (эталон структуры без данных).
--- Версия каркаса: 3
+-- Версия каркаса: 4
 -- Схема: webshelf
 --
 -- Назначение: DbBootstrapper сравнивает живую схему с этим каркасом при старте
@@ -106,3 +106,63 @@ CREATE TABLE webshelf.registration_requests (
 
 -- Индекс для поиска заявок администратором по фамилии.
 CREATE INDEX registration_requests_last_name_idx ON webshelf.registration_requests (last_name);
+
+-- ============================================================================
+-- Журнал версий политик обработки данных.
+--
+-- Назначение: редакции текстов политик обработки файлов cookie и обработки
+-- персональных данных. Оформление (оболочка) страниц политик рендерится
+-- Razor-компонентами, текст редакции подгружается из этой таблицы.
+-- При старте PolicyContentService сравнивает контрольную сумму (SHA-256
+-- канонизированного текста) файла поставки (Content/Policies/*.html)
+-- с последней строкой журнала той же политики и при изменении добавляет
+-- новую редакцию. Журнал append-only: строки никогда не обновляются
+-- и не удаляются; возврат текста, совпадающего с любой из существующих
+-- редакций, новую строку не создаёт (защита от случайного отката публикации
+-- более старой поставкой). Актуальная редакция политики — MAX(version).
+-- Дата вступления редакции в силу — момент вставки строки (перезапуск
+-- приложения с изменённым текстом). Полное описание — WebShelfDocs/
+-- Решения в проекте/Версионирование политик.md.
+--
+-- Таблица автономна: ссылки на другие таблицы схемы не устанавливаются.
+--
+-- Столбцы:
+--   id             — суррогатный первичный ключ;
+--   policy         — код политики: 'cookie' — обработка cookie,
+--                    'personal-data' — обработка персональных данных;
+--   version        — номер редакции в пределах политики; начинается с 1
+--                    и монотонно растёт (CHECK-домен кодов не позволяет
+--                    журналу выйти за пределы известных политик);
+--   effective_from — дата и время вступления редакции в силу (UTC);
+--   content        — канонизированный HTML-текст редакции (UTF-8, LF,
+--                    без BOM): фрагмент без оболочки страницы и заголовка h1;
+--   content_sha256 — контрольная сумма SHA-256 текста редакции (hex, 64
+--                    символа): сравнение при синхронизации и контроль
+--                    целостности при чтении;
+--   created_at     — техническое время вставки строки.
+--
+-- ВАЖНО: составные выражения CHECK записываются со скобками вокруг
+-- каждого операнда и в той форме, которую возвращает pg_get_constraintdef
+-- (см. комментарий к registration_permits_counter_range): сравнение литералов
+-- со столбцом text PostgreSQL депарсит с приведением ::text — каркас обязан
+-- записывать литералы в этом же виде, иначе контрольная проверка после
+-- применения каркаса никогда не сойдётся.
+-- ============================================================================
+
+CREATE SEQUENCE webshelf.policy_versions_id_seq AS bigint START WITH 1 INCREMENT BY 1;
+
+CREATE TABLE webshelf.policy_versions (
+    id             bigint                   NOT NULL DEFAULT nextval('webshelf.policy_versions_id_seq'::regclass),
+    policy         text                     NOT NULL,
+    version        integer                  NOT NULL,
+    effective_from timestamp with time zone NOT NULL DEFAULT now(),
+    content        text                     NOT NULL,
+    content_sha256 character varying(64)    NOT NULL,
+    created_at     timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT policy_versions_pkey PRIMARY KEY (id),
+    CONSTRAINT policy_versions_policy_version_key UNIQUE (policy, version),
+    CONSTRAINT policy_versions_policy_domain CHECK (((policy = 'cookie'::text) OR (policy = 'personal-data'::text)))
+);
+
+-- Индекс для выборки строк конкретной политики (актуальная редакция, история).
+CREATE INDEX policy_versions_policy_idx ON webshelf.policy_versions (policy);

@@ -1,0 +1,33 @@
+@page "/personal-data-policy.html"
+@layout PolicyLayout
+@using WebShelf.Classes.Service
+@inject IPolicyContentSource Policies
+
+<PageTitle>@PolicyCatalog.PersonalData.TitlebarText</PageTitle>
+
+@* Актуальная редакция политики обработки персональных данных: контент —
+   из журнала webshelf.policy_versions, оформление — шаблон PolicyDocument.
+   Адрес сохранён со времён статичной страницы (ссылки футера, чек-бокса
+   согласия формы заявки и текстов политик не меняются). Поведение аналогично
+   странице политики обработки файлов cookie. *@
+<PolicyDocument Definition="@PolicyCatalog.PersonalData" Content="@current" History="@history" PolicyCode="@PolicyCatalog.PersonalData.Code" />
+
+@code {
+    /// <summary>Актуальная редакция политики; null — журнал пуст.</summary>
+    private PolicyVersion? current;
+
+    /// <summary>Сводки всех редакций для блока «История редакций».</summary>
+    private IReadOnlyList<PolicyVersionSummary> history = [];
+
+    /// <summary>
+    /// Загружает актуальную редакцию и историю из журнала редакций
+    /// (IPolicyContentSource). Целостность редакции проверяет сервис:
+    /// при нарушении исключение прерывает рендер (fail-fast) и попадает
+    /// в обработчик ошибок приложения.
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        current = await Policies.GetCurrentAsync(PolicyCatalog.PersonalDataPolicyCode);
+        history = await Policies.GetHistoryAsync(PolicyCatalog.PersonalDataPolicyCode);
+    }
+}

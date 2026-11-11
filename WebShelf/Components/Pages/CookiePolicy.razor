@@ -1,0 +1,33 @@
+@page "/cookie-policy.html"
+@layout PolicyLayout
+@using WebShelf.Classes.Service
+@inject IPolicyContentSource Policies
+
+<PageTitle>@PolicyCatalog.Cookie.TitlebarText</PageTitle>
+
+@* Актуальная редакция политики обработки файлов cookie: контент — из журнала
+   webshelf.policy_versions, оформление — шаблон PolicyDocument. Адрес
+   сохранён со времён статичной страницы (ссылки футера, баннера согласия,
+   текстов политик и закладки пользователей не меняются). Загрузка — серверная,
+   при рендере SSR-страницы (значения кэшированы сервисом после старта). *@
+<PolicyDocument Definition="@PolicyCatalog.Cookie" Content="@current" History="@history" PolicyCode="@PolicyCatalog.Cookie.Code" />
+
+@code {
+    /// <summary>Актуальная редакция политики; null — журнал пуст.</summary>
+    private PolicyVersion? current;
+
+    /// <summary>Сводки всех редакций для блока «История редакций».</summary>
+    private IReadOnlyList<PolicyVersionSummary> history = [];
+
+    /// <summary>
+    /// Загружает актуальную редакцию и историю из журнала редакций
+    /// (IPolicyContentSource). Целостность редакции проверяет сервис:
+    /// при нарушении исключение прерывает рендер (fail-fast) и попадает
+    /// в обработчик ошибок приложения.
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        current = await Policies.GetCurrentAsync(PolicyCatalog.CookiePolicyCode);
+        history = await Policies.GetHistoryAsync(PolicyCatalog.CookiePolicyCode);
+    }
+}

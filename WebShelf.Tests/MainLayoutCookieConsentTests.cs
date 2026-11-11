@@ -41,8 +41,10 @@ public class MainLayoutCookieConsentTests
 
     /// <summary>
     /// Рендерит MainLayout статически (<see cref="HtmlRenderer"/>) с данными
-    /// <paramref name="data"/>. Компонентам предоставляются Data и нерабочий
-    /// IJSRuntime статического рендера.
+    /// <paramref name="data"/>. Компонентам предоставляются Data, подмена
+    /// источника текстов политик (CookieConsent после подключения журнала
+    /// редакций читает номер cookie-редакции через IPolicyContentSource) и
+    /// нерабочий IJSRuntime статического рендера.
     /// </summary>
     /// <param name="data">Хранилище системных данных (конфигурация баннера).</param>
     /// <returns>HTML-разметка MainLayout.</returns>
@@ -51,6 +53,7 @@ public class MainLayoutCookieConsentTests
         ServiceCollection services = new();
         services.AddLogging();
         services.AddSingleton(data);
+        services.AddSingleton<WebShelf.Classes.Service.IPolicyContentSource>(new FakePolicyContentSource());
         services.AddSingleton<IJSRuntime>(new StaticRenderJsRuntime());
 
         await using ServiceProvider provider = services.BuildServiceProvider();

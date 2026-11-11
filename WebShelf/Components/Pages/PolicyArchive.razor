@@ -1,0 +1,126 @@
+@page "/policy/{PolicyCode}/{VersionNumber:int}"
+@layout PolicyLayout
+@using WebShelf.Classes.Service
+@inject IPolicyContentSource Policies
+
+<PageTitle>@(definition?.TitlebarText ?? "Политика — WebShelf")</PageTitle>
+
+@* Архивная редакция политики обработки данных: тот же шаблон оформления
+   (PolicyDocument) с архивной плашкой — номер, период действия, контрольная
+   сумма и ссылка на актуальную редакцию. Запрошена актуальная редакция —
+   плашка не выводится, страница эквивалентна основной. Неизвестный код
+   политики или несуществующий номер редакции — резервное сообщение. *@
+@if (notFound)
+{
+    <div class="ws-policy-page">
+        <main class="ws-policy">
+            <div class="ws-policy-titlebar">
+                <span class="ws-policy-titlebar-icon">WS</span>
+                <span>Политика — WebShelf</span>
+            </div>
+            <div class="ws-policy-content">
+                <h1>Редакция не найдена</h1>
+                <p class="ws-policy-missing">
+                    @(definition is null
+                        ? "Политика с указанным кодом не существует."
+                        : "Запрошенная редакция политики не найдена в журнале редакций.")
+                </p>
+                <a class="ws-policy-back" href="/">Вернуться в систему</a>
+            </div>
+        </main>
+    </div>
+}
+else
+{
+    <PolicyDocument Definition="@definition" Content="@target" History="@history"
+                    PolicyCode="@PolicyCode" ArchiveNote="@ArchiveNote" />
+}
+
+@code {
+    /// <summary>
+    /// Код политики из маршрута: cookie / personal-data.
+    /// </summary>
+    [Parameter]
+    public string PolicyCode { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Номер запрошенной редакции из маршрута (от 1).
+    /// </summary>
+    [Parameter]
+    public int VersionNumber { get; set; }
+
+    /// <summary>Описание политики по коду маршрута; null — код неизвестен.</summary>
+    private PolicyDefinition? definition;
+
+    /// <summary>Запрошенная редакция (или актуальная, если она и запрошена).</summary>
+    private PolicyVersion? target;
+
+    /// <summary>Актуальная редакция политики.</summary>
+    private PolicyVersion? current;
+
+    /// <summary>Сводки всех редакций для блока «История редакций».</summary>
+    private IReadOnlyList<PolicyVersionSummary> history = [];
+
+    /// <summary>true — код политики или номер редакции не существует.</summary>
+    private bool notFound;
+
+    /// <summary>
+    /// Загружает описание политики, историю, актуальную и запрошенную
+    /// редакции. Актуальная редакция по запросу показывается без архивной
+    /// плашки (эквивалент основной странице). Целостность архивной редакции
+    /// проверяет сервис: нарушение прерывает рендер (fail-fast).
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        definition = PolicyCatalog.TryFind(PolicyCode);
+
+        if (definition is null)
+        {
+            notFound = true;
+            return;
+        }
+
+        if (VersionNumber < 1)
+        {
+            notFound = true;
+            return;
+        }
+
+        history = await Policies.GetHistoryAsync(definition.Code);
+        current = await Policies.GetCurrentAsync(definition.Code);
+
+        if (current is not null && VersionNumber == current.Version)
+        {
+            target = current;
+            return;
+        }
+
+        target = await Policies.GetVersionAsync(definition.Code, VersionNumber);
+        notFound = target is null;
+    }
+
+    /// <summary>
+    /// Текст архивной плашки: период действия редакции (до вступления следующей),
+    /// контрольная сумма и номер актуальной редакции. <see langword="null"/> —
+    /// показана актуальная редакция либо редакции отсутствуют.
+    /// </summary>
+    private string? ArchiveNote
+    {
+        get
+        {
+            if (target is null || current is null || target.Version == current.Version)
+            {
+                return null;
+            }
+
+            PolicyVersionSummary? next = history.FirstOrDefault(summary => summary.Version == target.Version + 1);
+
+            string period = next is null
+                ? $"с {PolicyDocument.FormatDate(target.EffectiveFrom)}"
+                : $"с {PolicyDocument.FormatDate(target.EffectiveFrom)} по {PolicyDocument.FormatDate(next.EffectiveFrom)}";
+
+            return $"Архивная редакция №{target.Version} ({period}); не является действующей. " +
+                   $"Актуальная редакция — №{current.Version}. Контрольная сумма редакции: {target.ContentSha256}";
+        }
+    }
+}

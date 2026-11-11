@@ -3,14 +3,18 @@
    Решение пользователя хранится в localStorage браузера (ключ ws-cookie-consent,
    CookieConsent.razor.js) и на сервер не передаётся: при очистке данных сайта
    решение удаляется и баннер спрашивает заново (отзыв согласия).
-   Пока система использует только технически необходимые cookie, баннер не нужен —
-   правовой анализ: WebShelfDocs/Решения в проекте/Обработка cookie.md. *@
+   Согласие привязано к редакции cookie-политики (журнал webshelf.policy_versions):
+   после публикации новой редакции сохранённое решение считается отсутствующим
+   и баннер запрашивает согласие заново. Пока система использует только
+   технически необходимые cookie, баннер не нужен — правовой анализ:
+   WebShelfDocs/Решения в проекте/Обработка cookie.md. *@
 @implements IAsyncDisposable
 
 @using WebShelf.Classes.Service
 @using Serilog
 
 @inject Data AppData
+@inject IPolicyContentSource Policies
 @inject IJSRuntime Js
 
 @if (bannerVisible)
@@ -46,11 +50,19 @@
     private IJSObjectReference? _consentModule;
 
     /// <summary>
+    /// Номер актуальной редакции cookie-политики, к которой привязано согласие.
+    /// Читается из журнала редакций (кэш сервиса после старта) при первом
+    /// рендере; 0 — журнал недоступен (согласие запрашивается заново).
+    /// </summary>
+    private int cookiePolicyVersion;
+
+    /// <summary>
     /// После первого интерактивного рендера проверяет, включён ли баннер согласия
-    /// ключом cookieconsent, и есть ли у пользователя сохранённое решение.
-    /// Баннер показывается только при включённом ключе и отсутствии решения
-    /// (повторно решение не запрашивается). Проверка выполняется после рендера,
-    /// а не в OnInitialized: localStorage доступен только через JS interop.
+    /// ключом cookieconsent, и есть ли у пользователя действующее решение —
+    /// привязанное к актуальной редакции cookie-политики. Баннер показывается
+    /// только при включённом ключе и отсутствии решения (повторно решение
+    /// не запрашивается). Проверка выполняется после рендера, а не в
+    /// OnInitialized: localStorage доступен только через JS interop.
     /// </summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -69,8 +81,13 @@
                 return;
             }
 
+            // Согласие привязано к редакции политики: номер читается из кэша
+            // сервиса журнала (обращений к БД в цепи страницы нет)
+            PolicyVersion? currentCookiePolicy = await Policies.GetCurrentAsync(PolicyCatalog.CookiePolicyCode);
+            cookiePolicyVersion = currentCookiePolicy?.Version ?? 0;
+
             _consentModule ??= await Js.InvokeAsync<IJSObjectReference>("import", "./Components/Shared/CookieConsent.razor.js");
-            bool hasDecision = await _consentModule.InvokeAsync<bool>("hasDecision");
+            bool hasDecision = await _consentModule.InvokeAsync<bool>("hasDecision", cookiePolicyVersion);
 
             if (!hasDecision)
             {
@@ -99,7 +116,8 @@
     }
 
     /// <summary>
-    /// Сохраняет решение пользователя (кнопки «Принять»/«Отклонить») и скрывает баннер.
+    /// Сохраняет решение пользователя (кнопки «Принять»/«Отклонить») с привязкой
+    /// к актуальной редакции cookie-политики и скрывает баннер.
     /// Отказ не блокирует работу системы: технически необходимые cookie
     /// (аутентификация, защита от CSRF) согласия не требуют; необязательные cookie
     /// (когда появятся) обязаны проверять сохранённое решение перед установкой.
@@ -113,7 +131,7 @@
         {
             if (_consentModule is not null)
             {
-                await _consentModule.InvokeVoidAsync("saveDecision", accepted);
+                await _consentModule.InvokeVoidAsync("saveDecision", accepted, cookiePolicyVersion);
             }
 
             bannerVisible = false;

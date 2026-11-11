@@ -40,9 +40,8 @@
         user-select: none;
     }
 
-    /* Статичная ссылка на политику: обычный переход (не Blazor-роутинг),
-       цель — предопубликованный документ wwwroot (cookie-policy.html,
-       personal-data-policy.html) */
+    /* Ссылка на политику: обычный переход (не Blazor-роутинг), цель —
+       Razor-страница политики (контент — журнал webshelf.policy_versions) */
     .ws-footer .ws-footer-link {
         color: rgba(255, 255, 255, 0.75);
         text-decoration: none;

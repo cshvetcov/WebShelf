@@ -7,11 +7,20 @@
  * сайта в браузере решение удаляется вместе с ними — это же способ отзыва
  * согласия (баннер спросит решение заново).
  *
+ * Согласие привязано к редакции cookie-политики (журнал редакций в БД,
+ * webshelf.policy_versions): в запись сохраняется номер редакции
+ * (policyVersion), на момент которой дано согласие. После публикации
+ * новой редакции политики сохранённое решение считается отсутствующим,
+ * и баннер повторно запрашивает согласие (информированность согласия,
+ * ст. 9 152-ФЗ).
+ *
  * API (вызывается из Blazor через JS interop):
- *   hasDecision() — есть ли действующее сохранённое решение (boolean):
- *     запись с несовпадающей версией CONSENT_VERSION не учитывается
- *   saveDecision(accepted) — записать решение (boolean)
- *   getDecision() — прочитать решение: null | { accepted, date, version }
+ *   hasDecision(policyVersion) — есть ли действующее сохранённое решение
+ *     для указанной редакции cookie-политики (boolean): записи с другой
+ *     редакцией (включая отсутствующую у старых записей) не учитываются
+ *   saveDecision(accepted, policyVersion) — записать решение (boolean)
+ *   getDecision() — прочитать запись: null | { accepted, date, version,
+ *     policyVersion }; проверяется только версия формата записи
  *   resetDecision() — удалить решение (принудительный повторный запрос)
  */
 
@@ -19,10 +28,9 @@
 const STORAGE_KEY = "ws-cookie-consent";
 
 /**
- * Версия формата записи согласия. Увеличивается при изменении состава
- * обрабатываемых cookie (например, добавлении аналитических): сохранённое
- * решение со старой версией считается отсутствующим, и баннер повторно
- * запрашивает согласие.
+ * Версия формата записи согласия (не редакция политики!). Увеличивается
+ * только при изменении состава полей записи. Редакция cookie-политики —
+ * отдельное поле policyVersion, передаваемое при каждом вызове.
  */
 const CONSENT_VERSION = 1;
 
@@ -55,33 +63,42 @@ function writeRaw(value) {
 }
 
 /**
- * Проверяет наличие действующего сохранённого решения о согласии.
- * Делегирует getDecision(): запись с несовпадающей версией
- * CONSENT_VERSION (повреждённая или оставшаяся от старой версии формата)
- * решением не считается — баннер запросит согласие заново, как описано
- * в WebShelfDocs/Решения в проекте/Обработка cookie.md.
+ * Проверяет наличие действующего сохранённого решения о согласии
+ * применительно к указанной редакции cookie-политики. Делегирует
+ * getDecision(): записи с несовпадающей версией формата, повреждённые,
+ * устаревшие (без поля policyVersion) и данные до другой редакции
+ * политики решением не считаются — баннер запросит согласие заново,
+ * как описано в WebShelfDocs/Решения в проекте/Версионирование политик.md.
+ * @param {number} policyVersion Номер актуальной редакции cookie-политики.
  * @returns {boolean} true, если действующее решение сохранено.
  */
-export function hasDecision() {
-    return getDecision() !== null;
+export function hasDecision(policyVersion) {
+    const decision = getDecision();
+    return decision !== null && decision.policyVersion === policyVersion;
 }
 
 /**
- * Записывает решение пользователя о согласии.
+ * Записывает решение пользователя о согласии с привязкой к редакции
+ * cookie-политики, на момент которой оно дано.
  * @param {boolean} accepted - true — согласие дано; false — отклонено.
+ * @param {number} policyVersion Номер актуальной редакции cookie-политики.
  */
-export function saveDecision(accepted) {
+export function saveDecision(accepted, policyVersion) {
     writeRaw(JSON.stringify({
         version: CONSENT_VERSION,
         accepted: accepted === true,
-        date: new Date().toISOString()
+        date: new Date().toISOString(),
+        policyVersion: policyVersion
     }));
 }
 
 /**
- * Возвращает сохранённое решение.
- * @returns {Object|null} { accepted: boolean, date: string, version: number }
- *   или null, если решения нет / запись повреждена / версия не совпадает.
+ * Возвращает сохранённое решение (запись формата текущей версии).
+ * @returns {Object|null} { accepted: boolean, date: string, version: number,
+ *   policyVersion: number|null } либо null, если записи нет / запись
+ *   повреждена / версия формата не совпадает. Привязка к редакции политики
+ *   проверяется в hasDecision: записи без policyVersion (старый формат)
+ *   возвращаются здесь, но решением для новой редакции не являются.
  */
 export function getDecision() {
     const raw = readRaw();

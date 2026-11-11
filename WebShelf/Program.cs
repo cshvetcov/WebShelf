@@ -140,6 +140,25 @@ try
         return 1;
     }
 
+    // --- Журнал версий политик (cookie / персональные данные) ---
+    // После приведения схемы к каркасу: тексты политик поставки
+    // (Content/Policies) синхронизируются с журналом webshelf.policy_versions —
+    // новая редакция создаётся только при изменении контрольной суммы текста,
+    // откат публикации не проходит (см. WebShelfDocs/Решения в проекте/
+    // Версионирование политик.md). Страницы политик и баннер согласия читают
+    // редакции из журнала (IPolicyContentSource). Ошибка синхронизации
+    // останавливает приложение (fail-fast): без текста политики информирование
+    // субъектов невозможно
+    PolicyContentService policyContentService = new(database);
+
+    if (!await policyContentService.SyncFromDeliveryAsync())
+    {
+        Log.Fatal(
+            "Не удалось синхронизировать журнал версий политик с поставкой. Приложение останавливается. Class={Class}, Method={Method}",
+            ClassName, MethodName);
+        return 1;
+    }
+
     // --- Группы безопасности AD ---
     // После считывания конфигурации (мастер-ключ, инициализация домена, проверка
     // сервисной учётной записи): 0) самопроверка каталога ролей — единый источник
@@ -360,6 +379,12 @@ try
     // класс internal с primary-конструктором не активируется контейнером DI
     // через public-конструктор
     builder.Services.AddSingleton(new RegistrationPermitChecker(database));
+
+    // Журнал версий политик: страницы политик (CookiePolicy, PersonalDataPolicy,
+    // PolicyArchive) и баннер согласия получают тексты редакций через
+    // IPolicyContentSource — готовый singleton-экземпляр, синхронизированный
+    // с поставкой выше (как RegistrationPermitChecker)
+    builder.Services.AddSingleton<IPolicyContentSource>(policyContentService);
 
     // --- Ролевая модель (варианты 1+2+3) ---
     // Вариант 1: TTL-кэш роли в резолвере (rolettl, по умолчанию 60 с).

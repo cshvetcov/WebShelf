@@ -1,0 +1,13 @@
+@* Layout страниц политик обработки данных: без ленты, футера и баннера согласия —
+   политика — самодостаточный документ. Подключает оформление страниц политик
+   (css/policy.css) и закрывает страницы от индексации поисковыми системами
+   (noindex). Ссылка на стили задаётся обычным относительным href без карты
+   ресурсов (Assets): страница рендерится и вне интерактивного контура. *@
+@inherits LayoutComponentBase
+
+<HeadContent>
+    <meta name="robots" content="noindex" />
+    <link rel="stylesheet" href="css/policy.css" />
+</HeadContent>
+
+@Body

@@ -1,0 +1,110 @@
+@* Шаблон страницы политики обработки данных: всё оформление — оболочка «окна»
+   (ws-policy), заголовок документа, строка редакции, архивная плашка, кнопка
+   возврата и блок «История редакций». Текст редакции внедряется как готовая
+   разметка ((MarkupString)): контент журнала — доверенный HTML из поставки
+   (не пользовательский ввод), санитизация не требуется; скрипты в тексте
+   запрещены тестами поставки (CSP script-src 'self').
+   Параметры: описание политики (PolicyCatalog), редакция из журнала
+   (webshelf.policy_versions) и сводки истории. *@
+@using System.Globalization
+@using WebShelf.Classes.Service
+
+<div class="ws-policy-page">
+    <main class="ws-policy">
+        <div class="ws-policy-titlebar">
+            <span class="ws-policy-titlebar-icon">WS</span>
+            <span>@Definition?.TitlebarText</span>
+        </div>
+
+        <div class="ws-policy-content">
+            @if (Content is null)
+            {
+                <h1>@Definition?.DocumentTitle</h1>
+                <p class="ws-policy-missing">
+                    Текст политики временно недоступен. Обратитесь к администратору системы.
+                </p>
+            }
+            else
+            {
+                <h1>@Definition?.DocumentTitle</h1>
+                <p class="ws-policy-date">Редакция №@Content.Version от @FormatDate(Content.EffectiveFrom)</p>
+                @if (ArchiveNote is not null)
+                {
+                    <div class="ws-policy-archive">@ArchiveNote</div>
+                }
+                @((MarkupString)Content.Content)
+            }
+
+            <a class="ws-policy-back" href="/">Вернуться в систему</a>
+
+            @if (History is { Count: > 1 } && PolicyCode is not null)
+            {
+                <h2 class="ws-policy-history-title">История редакций</h2>
+                <ul class="ws-policy-history">
+                    @foreach (PolicyVersionSummary summary in History)
+                    {
+                        <li>
+                            <span>№@summary.Version — от @FormatDate(summary.EffectiveFrom) —</span>
+                            @if (Content is not null && summary.Version == Content.Version)
+                            {
+                                <span class="ws-policy-history-current">действует</span>
+                            }
+                            else
+                            {
+                                <a class="ws-policy-history-link" href="/policy/@PolicyCode/@summary.Version">архив</a>
+                            }
+                            <code class="ws-policy-history-sha" title="@summary.ContentSha256">@summary.ContentSha256[..12]</code>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    </main>
+</div>
+
+@code {
+    /// <summary>
+    /// Описание политики (PolicyCatalog): заголовки документа и окна.
+    /// </summary>
+    [Parameter]
+    public PolicyDefinition? Definition { get; set; }
+
+    /// <summary>
+    /// Отображаемая редакция политики: актуальная или архивная.
+    /// <see langword="null"/> — журнал не содержит редакций (резервное сообщение).
+    /// </summary>
+    [Parameter]
+    public PolicyVersion? Content { get; set; }
+
+    /// <summary>
+    /// Сводки всех редакций политики — от актуальной к первой
+    /// (блок «История редакций»; блок выводится при более одной редакции).
+    /// </summary>
+    [Parameter]
+    public IReadOnlyList<PolicyVersionSummary>? History { get; set; }
+
+    /// <summary>
+    /// Код политики — для ссылок на архивные редакции.
+    /// </summary>
+    [Parameter]
+    public string? PolicyCode { get; set; }
+
+    /// <summary>
+    /// Текст архивной плашки: период действия и контрольная сумма архивной
+    /// редакции. <see langword="null"/> — страница актуальной редакции.
+    /// </summary>
+    [Parameter]
+    public string? ArchiveNote { get; set; }
+
+    /// <summary>
+    /// Форматирует дату вступления редакции в силу — день.месяц.год
+    /// в локальном времени сервера оператора. Инвариантная культура:
+    /// разделители не зависят от локали ОС.
+    /// </summary>
+    /// <param name="date">Момент вступления редакции в силу (UTC).</param>
+    /// <returns>Отформатированная дата.</returns>
+    internal static string FormatDate(DateTimeOffset date)
+    {
+        return date.ToLocalTime().ToString("dd.MM.yyyy", CultureInfo.InvariantCulture);
+    }
+}
