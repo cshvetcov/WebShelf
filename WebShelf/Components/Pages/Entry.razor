@@ -182,14 +182,16 @@ else
        пермита (найден в БД, счётчик регистраций больше нуля). Закрытие кнопкой
        «×» возвращает на окно входа (не в окно активации). Форма — компонент
        RegistrationApplicationForm; состояние формы сбрасывается закрытием
-       окна (компонент размонтируется). *@
+       окна (компонент размонтируется). Проверенный пермит передаётся форме
+       параметром — он списывается (счётчик уменьшается на 1) только при
+       успешной подаче заявки. *@
     <AppWindow Title="Подача заявки на регистрацию — WebShelf"
                IconText="WS"
                CanClose="true"
                OnClose="CloseRegistrationApplication"
                ApplyPageBackground="false"
                MaxWidth="420px">
-        <RegistrationApplicationForm />
+        <RegistrationApplicationForm Permit="activePermit" />
     </AppWindow>
 }
 
@@ -227,6 +229,17 @@ else
     /// сбрасывают ввод.
     /// </summary>
     private string permitValue = string.Empty;
+
+    /// <summary>
+    /// Проверенный пермит, по которому открыто окно «Подача заявки
+    /// на регистрацию»: заполняется после успешной проверки в БД
+    /// (найден, счётчик больше нуля) и передаётся форме параметром — счётчик
+    /// уменьшается на 1 только при успешной подаче заявки (не при открытии
+    /// формы: пермит нельзя «сжечь», закрыв окно без отправки). Сбрасывается
+    /// закрытием окна заявки. Секретный код: в логи не попадает ни при каких
+    /// условиях (правило маскировки).
+    /// </summary>
+    private string activePermit = string.Empty;
 
     /// <summary>
     /// Сообщение об ошибке проверки пермита: пустой ввод или ошибка сервера
@@ -461,10 +474,13 @@ else
     /// Возвращает пользователя на окно «Вход в систему»: колбэк закрытия
     /// окна «Подача заявки на регистрацию» (AppWindow.OnClose →
     /// JS NotifyClosedAsync). Введённые данные заявки сбрасываются
-    /// вместе с размонтированием формы.
+    /// вместе с размонтированием формы; проверенный пермит также
+    /// сбрасывается (повторное открытие окна заявки требует новой проверки
+    /// пермита в окне активации).
     /// </summary>
     private void CloseRegistrationApplication()
     {
+        activePermit = string.Empty;
         currentWindow = EntryWindow.Login;
     }
 
@@ -515,14 +531,15 @@ else
         {
             RegistrationPermitCheckResult result = await PermitChecker.CheckAsync(permitValue);
 
-            // Введённый пермит не сохраняется при смене окна и после проверки
-            permitValue = string.Empty;
-
             if (result.IsUsable)
             {
                 // Успешная активация сбрасывает блокировки и эскалацию —
-                // как RecordSuccess у LoginGuard после успешного входа
+                // как RecordSuccess у LoginGuard после успешного входа.
+                // Проверенный пермит передаётся окну заявки (списывается
+                // только при успешной подаче); поле проверки очищается
                 PermitGuard.RecordSuccess(ClientIp);
+                activePermit = permitValue.Trim();
+                permitValue = string.Empty;
                 currentWindow = EntryWindow.RegistrationApplication;
             }
             else
@@ -530,6 +547,7 @@ else
                 // Пермит не найден или исчерпан: окно остаётся открытым —
                 // блокировка с обратным отсчётом (без красного сообщения:
                 // таймер включается сразу и заменяет его)
+                permitValue = string.Empty;
                 ApplyPermitOutcome(PermitCheckOutcome.FromResult(result));
             }
         }

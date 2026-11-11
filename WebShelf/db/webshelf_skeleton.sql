@@ -1,5 +1,5 @@
 -- WebShelf: файл-каркас структуры БД (эталон структуры без данных).
--- Версия каркаса: 4
+-- Версия каркаса: 5
 -- Схема: webshelf
 --
 -- Назначение: DbBootstrapper сравнивает живую схему с этим каркасом при старте
@@ -70,38 +70,72 @@ CREATE TABLE webshelf.registration_permits (
 --
 -- Назначение: анкеты кандидатов, подавших заявку на создание учётной записи.
 -- Авторизация в приложении выполняется через Windows AD, поэтому таблица
--- хранит только контактные и персональные данные кандидата для проверки
+-- хранит данные анкеты и контактные данные кандидата для проверки
 -- администратором; учётные записи здесь не создаются и не хранятся.
 --
--- Таблица автономна: связи с таблицей пермитов на уровне схемы не
--- устанавливаются; сопоставление заявки и пермита выполняется прикладным
--- кодом в момент обработки заявки.
+-- Таблица автономна: связи с таблицами пермитов и журнала политик на уровне
+-- схемы не устанавливаются; сопоставление заявки с пермитом и редакциями
+-- политик выполняется прикладным кодом в момент обработки заявки.
 --
 -- Столбцы:
---   id         — суррогатный первичный ключ;
---   last_name  — фамилия кандидата;
---   first_name — имя кандидата;
---   patronymic — отчество кандидата; допускает NULL (может отсутствовать);
---   phone      — контактный телефон в международном формате
---                (+XXXXXXXXXXX, длина до 20 символов с запасом на разделители);
---   email      — адрес электронной почты, до 254 символов (максимум по
---                RFC 5321); уникален — одна активная заявка на адрес;
---   birth_date — дата рождения кандидата; допускает NULL (необязательна
---                при заполнении формы).
+--   id                           — суррогатный первичный ключ (служебный
+--                                  идентификатор заявки);
+--   last_name                    — фамилия кандидата;
+--   first_name                   — имя кандидата;
+--   patronymic                   — отчество кандидата (обязательное поле
+--                                  формы, NULL запрещён);
+--   phone                        — контактный телефон в формате маски
+--                                  формы «+7 (XXX) XXX-XX-XX» (18 символов,
+--                                  до 20 с запасом); уникален — одна заявка
+--                                  на номер;
+--   email                        — адрес электронной почты, до 254 символов
+--                                  (максимум по RFC 5321), хранится в нижнем
+--                                  регистре; уникален — одна заявка на адрес;
+--   personal_data_policy_version — номер редакции политики обработки
+--                                  персональных данных, действовавшей
+--                                  в момент подачи заявки (согласие
+--                                  привязано к редакции — журнал
+--                                  webshelf.policy_versions);
+--   cookie_policy_version        — номер редакции политики обработки файлов
+--                                  cookie, действовавшей в момент подачи
+--                                  заявки (согласие привязано к редакции);
+--   submitted_at                 — дата и время подачи заявки (UTC,
+--                                  точность до секунды — приложение
+--                                  записывает момент, усечённый до целых
+--                                  секунд; без DEFAULT: значение обязано
+--                                  передаваться явно);
+--   ad_object_guid               — objectGUID учётной записи AD, с которой
+--                                  связана заявка: NULL — заявка ещё не
+--                                  принята администратором, значение —
+--                                  принята (одобрена). objectGUID —
+--                                  неизменяемый идентификатор объекта AD
+--                                  (не переиспользуется и не меняется
+--                                  при переименовании учётной записи, в
+--                                  отличие от sAMAccountName/UPN/DN) — связь
+--                                  «заявка ↔ учётная запись» не теряется;
+--                                  UNIQUE — одна учётная запись AD может
+--                                  быть связана не более чем с одной
+--                                  заявкой (NULL не конфликтует: не
+--                                  принятых заявок сколько угодно).
 -- ============================================================================
 
 CREATE SEQUENCE webshelf.registration_requests_id_seq AS bigint START WITH 1 INCREMENT BY 1;
 
 CREATE TABLE webshelf.registration_requests (
-    id          bigint                  NOT NULL DEFAULT nextval('webshelf.registration_requests_id_seq'::regclass),
-    last_name   text                    NOT NULL,
-    first_name  text                    NOT NULL,
-    patronymic  text                    NULL,
-    phone       character varying(20)   NOT NULL,
-    email       character varying(254)  NOT NULL,
-    birth_date  date                    NULL,
+    id                           bigint                   NOT NULL DEFAULT nextval('webshelf.registration_requests_id_seq'::regclass),
+    last_name                    text                     NOT NULL,
+    first_name                   text                     NOT NULL,
+    patronymic                   text                     NOT NULL,
+    phone                        character varying(20)    NOT NULL,
+    email                        character varying(254)   NOT NULL,
+    personal_data_policy_version integer                  NOT NULL,
+    cookie_policy_version        integer                  NOT NULL,
+    submitted_at                 timestamp with time zone NOT NULL,
+    ad_object_guid               uuid                     NULL,
     CONSTRAINT registration_requests_pkey PRIMARY KEY (id),
-    CONSTRAINT registration_requests_email_key UNIQUE (email)
+    CONSTRAINT registration_requests_email_key UNIQUE (email),
+    CONSTRAINT registration_requests_phone_key UNIQUE (phone),
+    CONSTRAINT registration_requests_ad_object_guid_key UNIQUE (ad_object_guid)
 );
 
 -- Индекс для поиска заявок администратором по фамилии.

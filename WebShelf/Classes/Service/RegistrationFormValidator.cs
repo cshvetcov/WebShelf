@@ -5,11 +5,15 @@ namespace WebShelf.Classes.Service;
 
 /// <summary>
 /// Валидация полей формы заявки на регистрацию: фамилия, имя, отчество,
-/// адрес электронной почты и номер телефона в формате
-/// «+7 (XXX) XXX-XX-XX». Проверки чистые (без обращения к серверу и БД)
-/// и выполняются по мере ввода — компонент формы вызывает их после каждого
-/// изменения поля. Методы <c>*Error</c> возвращают текст ошибки для интерфейса
-/// или <see langword="null"/>, если поле корректно.
+/// адрес электронной почты, номер телефона в формате
+/// «+7 (XXX) XXX-XX-XX», согласия на обработку персональных данных
+/// и файлов cookie. Проверки форматов чистые (без обращения к серверу
+/// и БД) и выполняются по мере ввода — компонент формы вызывает их после
+/// каждого изменения поля. Методы <c>*Error</c> возвращают текст ошибки
+/// для интерфейса или <see langword="null"/>, если поле корректно.
+/// Сообщения о занятых контактах (дубликат заявки) — константы: результат
+/// проверки уникальности в БД приходит асинхронно, тексты ошибок полей
+/// остаются в одном месте.
 /// </summary>
 internal static partial class RegistrationFormValidator
 {
@@ -24,6 +28,12 @@ internal static partial class RegistrationFormValidator
     /// совпадает с колонкой <c>email</c> таблицы <c>webshelf.registration_requests</c>.
     /// </summary>
     internal const int MaxEmailLength = 254;
+
+    /// <summary>Сообщение о занятом адресе электронной почты (дубликат заявки).</summary>
+    internal const string DuplicateEmailMessage = "Заявка с таким адресом электронной почты уже подана.";
+
+    /// <summary>Сообщение о занятом номере телефона (дубликат заявки).</summary>
+    internal const string DuplicatePhoneMessage = "Заявка с таким номером телефона уже подана.";
 
     /// <summary>
     /// Формат телефона: «+7 (XXX) XXX-XX-XX» — 10 значащих цифр после кода страны.
@@ -83,11 +93,13 @@ internal static partial class RegistrationFormValidator
     /// <summary>
     /// Проверяет готовность всей формы заявки к отправке: все поля обязательны
     /// и должны быть корректны (фамилия, имя, отчество, e-mail, телефон
-    /// в формате +7 (XXX) XXX-XX-XX), согласие на обработку персональных
-    /// данных должно быть дано. Кнопка «Подать заявку» активна только
-    /// в этом состоянии: проверка перевычисляется при каждом вводе, поэтому
-    /// любое исправление, делающее форму некорректной (удаление данных,
-    /// неверный формат, снятие согласия), снова блокирует кнопку.
+    /// в формате +7 (XXX) XXX-XX-XX), согласия на обработку персональных
+    /// данных и файлов cookie должны быть даны. Кнопка «Подать заявку»
+    /// активна только в этом состоянии (дополнительно форма требует
+    /// подтверждённой уникальности e-mail и телефона): проверка
+    /// перевычисляется при каждом вводе, поэтому любое исправление, делающее
+    /// форму некорректной (удаление данных, неверный формат, снятие
+    /// согласия), снова блокирует кнопку.
     /// </summary>
     /// <param name="lastName">Фамилия.</param>
     /// <param name="firstName">Имя.</param>
@@ -96,14 +108,24 @@ internal static partial class RegistrationFormValidator
     /// <param name="phone">Номер телефона в формате +7 (XXX) XXX-XX-XX.</param>
     /// <param name="consent"><see langword="true"/> — согласие на обработку
     /// персональных данных дано.</param>
+    /// <param name="cookieConsent"><see langword="true"/> — согласие
+    /// на обработку файлов cookie дано.</param>
     /// <returns><see langword="true"/> — форма заполнена корректно целиком.</returns>
-    internal static bool IsApplicationValid(string lastName, string firstName, string patronymic, string email, string phone, bool consent)
+    internal static bool IsApplicationValid(
+        string lastName,
+        string firstName,
+        string patronymic,
+        string email,
+        string phone,
+        bool consent,
+        bool cookieConsent)
         => IsValidName(lastName)
            && IsValidName(firstName)
            && IsValidName(patronymic)
            && IsValidEmail(email)
            && IsValidPhone(phone)
-           && consent;
+           && consent
+           && cookieConsent;
 
     /// <summary>
     /// Ошибка поля «Фамилия»/«Имя»/«Отчество».
@@ -181,6 +203,16 @@ internal static partial class RegistrationFormValidator
     /// <returns>Текст ошибки или <see langword="null"/>, если согласие дано.</returns>
     internal static string? ConsentError(bool consented)
         => consented ? null : "Необходимо согласие на обработку персональных данных.";
+
+    /// <summary>
+    /// Ошибка чек-бокса согласия на обработку файлов cookie.
+    /// Правила обработки аналогичны согласию на обработку персональных
+    /// данных: чек-бокс обязателен, снятая галочка блокирует подачу заявки.
+    /// </summary>
+    /// <param name="consented"><see langword="true"/> — согласие установлено.</param>
+    /// <returns>Текст ошибки или <see langword="null"/>, если согласие дано.</returns>
+    internal static string? CookieConsentError(bool consented)
+        => consented ? null : "Необходимо согласие на обработку файлов cookie.";
 
     /// <summary>
     /// Укладывает введённые цифры телефона в маску «+7 (XXX) XXX-XX-XX»:

@@ -1,153 +1,229 @@
 @* Форма заявки на регистрацию — тело окна «Подача заявки на регистрацию»
    (страница /entry). Все поля обязательны: фамилия, имя, отчество, E-Mail,
-   номер телефона в формате +7 (XXX) XXX-XX-XX и согласие на обработку
-   персональных данных. Форматы телефона и e-mail проверяются автоматически
-   по мере ввода (RegistrationFormValidator): телефон укладывается в маску,
-   ошибки появляются под полями после первого касания (blur) и обновляются
+   номер телефона в формате +7 (XXX) XXX-XX-XX, согласие на обработку
+   персональных данных и согласие на обработку файлов cookie. Форматы
+   телефона и e-mail проверяются автоматически по мере ввода
+   (RegistrationFormValidator): телефон укладывается в маску, ошибки
+   появляются под полями после первого касания (blur) и обновляются
    при каждом вводе.
+   E-Mail и телефон проверяются на уникальность в таблице заявок
+   (IRegistrationRequestService.CheckContactsAsync) после первого касания
+   поля: занятый контакт — предупреждение под полем и блокировка кнопки
+   «Подать заявку»; проверка сбрасывается при изменении значения и
+   повторяется при следующем касании. Итоговую гарантию уникальности даёт
+   сервер при подаче (ограничения UNIQUE таблицы).
    Кнопка «Подать заявку» по умолчанию неактивна и включается только когда
-   вся форма заполнена корректно (RegistrationFormValidator.IsApplicationValid):
-   состояние перевычисляется при каждом вводе, поэтому любое изменение данных,
-   делающее форму некорректной (удаление данных, неверный формат, снятие
-   согласия), снова блокирует кнопку. По задаче кнопка не выполняет действий —
-   обработка отправки появится вместе с логикой регистрации (аналогично
-   бывшей заглушке кнопки «Продолжить» окна активации разрешения).
-   Ссылка согласия ведёт на страницу политики /personal-data-policy.html
-   (контент — журнал редакций webshelf.policy_versions) и открывается
-   в новой вкладке: уход со страницы оборвал бы цепь Blazor
-   и введённые данные заявки потерялись бы. *@
+   вся форма заполнена корректно (RegistrationFormValidator.IsApplicationValid
+   + подтверждённая уникальность контактов). По нажатию заявка записывается
+   в webshelf.registration_requests (идентификатор УЗ AD — NULL, заявка
+   ожидает решения администратора), счётчик пермита уменьшается на 1 только
+   после вставки; при успехе форма заменяется сообщением о том, что вход
+   будет доступен после одобрения администратором.
+   Ссылки согласий ведут на страницы политик (контент — журнал редакций
+   webshelf.policy_versions) и открываются в новой вкладке: уход со страницы
+   оборвал бы цепь Blazor и введённые данные заявки потерялись бы. *@
 @using WebShelf.Classes.Service
+@using Serilog
 
-<div class="ws-form-group">
-    <label for="lastName">Фамилия</label>
-    <div class="ws-input-wrapper">
-        <input type="text"
-               id="lastName"
-               placeholder="Фамилия"
-               required
-               autofocus
-               autocomplete="family-name"
-               class="@(InputClass(LastNameError))"
-               @bind="lastName"
-               @bind:event="oninput"
-               @onblur="MarkLastNameTouched" />
-    </div>
-    @if (LastNameError is not null)
-    {
-        <div class="ws-field-error" role="alert">@LastNameError</div>
-    }
-</div>
+@inject IRegistrationRequestService RegistrationRequests
 
-<div class="ws-form-group">
-    <label for="firstName">Имя</label>
-    <div class="ws-input-wrapper">
-        <input type="text"
-               id="firstName"
-               placeholder="Имя"
-               required
-               autocomplete="given-name"
-               class="@(InputClass(FirstNameError))"
-               @bind="firstName"
-               @bind:event="oninput"
-               @onblur="MarkFirstNameTouched" />
-    </div>
-    @if (FirstNameError is not null)
-    {
-        <div class="ws-field-error" role="alert">@FirstNameError</div>
-    }
-</div>
-
-<div class="ws-form-group">
-    <label for="patronymic">Отчество</label>
-    <div class="ws-input-wrapper">
-        <input type="text"
-               id="patronymic"
-               placeholder="Отчество"
-               required
-               autocomplete="additional-name"
-               class="@(InputClass(PatronymicError))"
-               @bind="patronymic"
-               @bind:event="oninput"
-               @onblur="MarkPatronymicTouched" />
-    </div>
-    @if (PatronymicError is not null)
-    {
-        <div class="ws-field-error" role="alert">@PatronymicError</div>
-    }
-</div>
-
-<div class="ws-form-group">
-    <label for="email">E-Mail</label>
-    <div class="ws-input-wrapper">
-        <input type="email"
-               id="email"
-               placeholder="user@example.ru"
-               required
-               autocomplete="email"
-               inputmode="email"
-               class="@(InputClass(EmailError))"
-               @bind="email"
-               @bind:event="oninput"
-               @onblur="MarkEmailTouched" />
-    </div>
-    @if (EmailError is not null)
-    {
-        <div class="ws-field-error" role="alert">@EmailError</div>
-    }
-</div>
-
-<div class="ws-form-group">
-    <label for="phone">Номер телефона</label>
-    <div class="ws-input-wrapper">
-        <input type="tel"
-               id="phone"
-               placeholder="@RegistrationFormValidator.PhoneMaskHint"
-               required
-               autocomplete="tel"
-               inputmode="tel"
-               class="@(InputClass(PhoneError))"
-               @bind="phone"
-               @bind:event="oninput"
-               @bind:after="NormalizePhone"
-               @onblur="MarkPhoneTouched" />
-    </div>
-    @if (PhoneError is not null)
-    {
-        <div class="ws-field-error" role="alert">@PhoneError</div>
-    }
-</div>
-
-@* Согласие на обработку персональных данных (ч. 1 ст. 9 152-ФЗ): отметка
-   чек-бокса с текстом согласия и ссылкой на политику. Обязательно к заполнению
-   наравне с остальными полями. *@
-<div class="ws-form-check ws-form-check-consent">
-    <input type="checkbox"
-           id="pdConsent"
-           required
-           @bind="consent"
-           @bind:after="MarkConsentTouched" />
-    <label for="pdConsent">
-        Я даю согласие на обработку моих персональных данных (фамилия, имя,
-        отчество, адрес электронной почты, номер телефона) в целях рассмотрения
-        заявки на регистрацию в системе WebShelf в соответствии с Федеральным
-        законом от 27.07.2006 № 152-ФЗ «О персональных данных» и
-        <a class="ws-consent-link" href="/personal-data-policy.html" target="_blank" rel="noopener">Политикой обработки персональных данных</a>.
-    </label>
-</div>
-@if (ConsentError is not null)
+@if (isSubmitted)
 {
-    <div class="ws-field-error" role="alert">@ConsentError</div>
+    @* Успешная подача: форма заменяется сообщением (поля больше не нужны —
+       заявка записана и ожидает решения администратора). Окно закрывается
+       кнопкой «×» с возвратом на окно «Вход в систему». *@
+    <div class="ws-message ws-message-success" role="status">
+        Заявка принята. Вход в систему будет доступен после одобрения
+        администратором.
+    </div>
+}
+else
+{
+    <div class="ws-form-group">
+        <label for="lastName">Фамилия</label>
+        <div class="ws-input-wrapper">
+            <input type="text"
+                   id="lastName"
+                   placeholder="Фамилия"
+                   required
+                   autofocus
+                   autocomplete="family-name"
+                   class="@(InputClass(LastNameError))"
+                   @bind="lastName"
+                   @bind:event="oninput"
+                   @onblur="MarkLastNameTouched" />
+        </div>
+        @if (LastNameError is not null)
+        {
+            <div class="ws-field-error" role="alert">@LastNameError</div>
+        }
+    </div>
+
+    <div class="ws-form-group">
+        <label for="firstName">Имя</label>
+        <div class="ws-input-wrapper">
+            <input type="text"
+                   id="firstName"
+                   placeholder="Имя"
+                   required
+                   autocomplete="given-name"
+                   class="@(InputClass(FirstNameError))"
+                   @bind="firstName"
+                   @bind:event="oninput"
+                   @onblur="MarkFirstNameTouched" />
+        </div>
+        @if (FirstNameError is not null)
+        {
+            <div class="ws-field-error" role="alert">@FirstNameError</div>
+        }
+    </div>
+
+    <div class="ws-form-group">
+        <label for="patronymic">Отчество</label>
+        <div class="ws-input-wrapper">
+            <input type="text"
+                   id="patronymic"
+                   placeholder="Отчество"
+                   required
+                   autocomplete="additional-name"
+                   class="@(InputClass(PatronymicError))"
+                   @bind="patronymic"
+                   @bind:event="oninput"
+                   @onblur="MarkPatronymicTouched" />
+        </div>
+        @if (PatronymicError is not null)
+        {
+            <div class="ws-field-error" role="alert">@PatronymicError</div>
+        }
+    </div>
+
+    <div class="ws-form-group">
+        <label for="email">E-Mail</label>
+        <div class="ws-input-wrapper">
+            <input type="email"
+                   id="email"
+                   placeholder="user@example.ru"
+                   required
+                   autocomplete="email"
+                   inputmode="email"
+                   class="@(InputClass(EmailError))"
+                   @bind="email"
+                   @bind:event="oninput"
+                   @bind:after="OnEmailChanged"
+                   @onblur="MarkEmailTouchedAsync" />
+        </div>
+        @if (EmailError is not null)
+        {
+            <div class="ws-field-error" role="alert">@EmailError</div>
+        }
+    </div>
+
+    <div class="ws-form-group">
+        <label for="phone">Номер телефона</label>
+        <div class="ws-input-wrapper">
+            <input type="tel"
+                   id="phone"
+                   placeholder="@RegistrationFormValidator.PhoneMaskHint"
+                   required
+                   autocomplete="tel"
+                   inputmode="tel"
+                   class="@(InputClass(PhoneError))"
+                   @bind="phone"
+                   @bind:event="oninput"
+                   @bind:after="OnPhoneChanged"
+                   @onblur="MarkPhoneTouchedAsync" />
+        </div>
+        @if (PhoneError is not null)
+        {
+            <div class="ws-field-error" role="alert">@PhoneError</div>
+        }
+    </div>
+
+    @* Согласие на обработку персональных данных (ч. 1 ст. 9 152-ФЗ): отметка
+       чек-бокса с текстом согласия и ссылкой на политику. Обязательно к
+       заполнению наравне с остальными полями. *@
+    <div class="ws-form-check ws-form-check-consent">
+        <input type="checkbox"
+               id="pdConsent"
+               required
+               @bind="consent"
+               @bind:after="MarkConsentTouched" />
+        <label for="pdConsent">
+            Я даю согласие на обработку моих персональных данных (фамилия, имя,
+            отчество, адрес электронной почты, номер телефона) в целях рассмотрения
+            заявки на регистрацию в системе WebShelf в соответствии с Федеральным
+            законом от 27.07.2006 № 152-ФЗ «О персональных данных» и
+            <a class="ws-consent-link" href="/personal-data-policy.html" target="_blank" rel="noopener">Политикой обработки персональных данных</a>.
+        </label>
+    </div>
+    @if (ConsentError is not null)
+    {
+        <div class="ws-field-error" role="alert">@ConsentError</div>
+    }
+
+    @* Согласие на обработку файлов cookie: правила обработки аналогичны
+       согласию на обработку персональных данных (152-ФЗ, приказ
+       Роскомнадзора № 18) — чек-бокс обязателен, один щелчок мышью
+       закрывает юридические риски использования cookie. *@
+    <div class="ws-form-check ws-form-check-consent">
+        <input type="checkbox"
+               id="cookieConsent"
+               required
+               @bind="cookieConsent"
+               @bind:after="MarkCookieConsentTouched" />
+        <label for="cookieConsent">
+            Я даю согласие на обработку файлов cookie, используемых системой
+            WebShelf, в соответствии с Федеральным законом от 27.07.2006
+            № 152-ФЗ «О персональных данных» и
+            <a class="ws-consent-link" href="/cookie-policy.html" target="_blank" rel="noopener">Политикой обработки файлов cookie</a>.
+        </label>
+    </div>
+    @if (CookieConsentError is not null)
+    {
+        <div class="ws-field-error" role="alert">@CookieConsentError</div>
+    }
+
+    @* По умолчанию неактивна: включается только при полностью корректной
+       форме (все поля валидны, оба согласия даны, уникальность e-mail
+       и телефона подтверждена проверкой в БД). На время подачи
+       блокируется с текстом «Подача заявки...» — исключён повторный
+       запуск обработки *@
+    <button type="button"
+            class="ws-btn-primary"
+            disabled="@(!IsFormValid || isSubmitting)"
+            @onclick="SubmitApplicationAsync">
+        @(isSubmitting ? "Подача заявки..." : "Подать заявку")
+    </button>
+
+    @* Сообщение об ошибке подачи уровня формы: пермит стал недействительным
+       (исчерпан другим кандидатом между проверкой и подачей) или ошибка
+       сервера. Ошибки полей (занятые контакты) показываются под полями *@
+    @if (!string.IsNullOrEmpty(submitErrorMessage))
+    {
+        <div class="ws-message ws-message-error" role="alert">@submitErrorMessage</div>
+    }
 }
 
-@* По умолчанию неактивна: включается только при полностью корректной форме
-   (все поля валидны и дано согласие, IsApplicationValid). Состояние кнопки
-   перевычисляется при каждом вводе, поэтому исправление, делающее данные
-   некорректными (удаление, неверный формат, снятие галочки), снова её
-   блокирует. По задаче обработка нажатия отсутствует — она появится вместе
-   с логикой регистрации *@
-<button type="button" class="ws-btn-primary" disabled="@(!IsFormValid)">Подать заявку</button>
-
 @code {
+    private const string ClassName = "WebShelf.Components.Shared.RegistrationApplicationForm";
+
+    /// <summary>Сообщение об ошибке уровня формы: пермит недействителен или исчерпан.</summary>
+    private const string PermitNotUsableMessage =
+        "Пермит недействителен или исчерпан. Закройте окно и проверьте ключ разрешения.";
+
+    /// <summary>Сообщение об ошибке сервера при подаче заявки.</summary>
+    private const string ServerErrorMessage =
+        "Ошибка сервера при подаче заявки. Повторите попытку.";
+
+    /// <summary>
+    /// Пермит, по которому открыто окно заявки: передаётся страницей Entry
+    /// после успешной проверки в окне «Активация разрешения» и списывается
+    /// (счётчик уменьшается на 1) при успешной подаче заявки. Секретный код:
+    /// в логи не попадает ни при каких условиях.
+    /// </summary>
+    [Parameter]
+    public string Permit { get; set; } = string.Empty;
+
     /// <summary>Значение поля «Фамилия».</summary>
     private string lastName = string.Empty;
 
@@ -166,6 +242,9 @@
     /// <summary>true — согласие на обработку персональных данных установлено.</summary>
     private bool consent;
 
+    /// <summary>true — согласие на обработку файлов cookie установлено.</summary>
+    private bool cookieConsent;
+
     /// <summary>
     /// Признаки «поле тронуто» (первый blur/изменение): ошибка показывается
     /// только после касания поля, чтобы не ругаться на ещё не заполненную форму.
@@ -176,6 +255,54 @@
     private bool emailTouched;
     private bool phoneTouched;
     private bool consentTouched;
+    private bool cookieConsentTouched;
+
+    /// <summary>
+    /// Состояние проверки уникальности e-mail в таблице заявок
+    /// (IRegistrationRequestService.CheckContactsAsync). Форма допускает
+    /// подачу только при Available: NotChecked/Checking блокируют кнопку
+    /// (уникальность не подтверждена), Taken — занятый контакт
+    /// (предупреждение под полем).
+    /// </summary>
+    private ContactCheckState emailCheckState = ContactCheckState.NotChecked;
+
+    /// <summary>Состояние проверки уникальности телефона — аналогично e-mail.</summary>
+    private ContactCheckState phoneCheckState = ContactCheckState.NotChecked;
+
+    /// <summary>true — выполняется подача заявки: кнопка заблокирована.</summary>
+    private bool isSubmitting;
+
+    /// <summary>
+    /// true — заявка успешно записана: форма заменена сообщением
+    /// «Заявка принята. Вход в систему будет доступен после одобрения
+    /// администратором.»
+    /// </summary>
+    private bool isSubmitted;
+
+    /// <summary>
+    /// Сообщение об ошибке подачи уровня формы (пермит недействителен,
+    /// ошибка сервера); пустая строка — ошибки нет. Занятые контакты
+    /// показываются под полями, а не здесь.
+    /// </summary>
+    private string submitErrorMessage = string.Empty;
+
+    /// <summary>
+    /// Состояние асинхронной проверки уникальности контакта в таблице заявок.
+    /// </summary>
+    private enum ContactCheckState
+    {
+        /// <summary>Проверка не выполнялась (значение изменилось или поле ещё не трогали).</summary>
+        NotChecked,
+
+        /// <summary>Проверка выполняется (после касания поля с корректным форматом).</summary>
+        Checking,
+
+        /// <summary>Контакт свободен — заявки с таким значением нет.</summary>
+        Available,
+
+        /// <summary>Контакт занят — заявка с таким значением уже подана.</summary>
+        Taken
+    }
 
     /// <summary>Ошибка поля «Фамилия»; null — ошибки нет.</summary>
     private string? LastNameError =>
@@ -189,38 +316,279 @@
     private string? PatronymicError =>
         patronymicTouched ? RegistrationFormValidator.NameError(patronymic, "отчество") : null;
 
-    /// <summary>Ошибка поля «E-Mail»; null — ошибки нет.</summary>
+    /// <summary>
+    /// Ошибка поля «E-Mail»: сначала формат (после касания поля), затем
+    /// предупреждение о занятом адресе — по результату проверки в БД.
+    /// </summary>
     private string? EmailError =>
-        emailTouched ? RegistrationFormValidator.EmailError(email) : null;
+        emailTouched
+            ? RegistrationFormValidator.EmailError(email)
+              ?? (emailCheckState == ContactCheckState.Taken
+                  ? RegistrationFormValidator.DuplicateEmailMessage
+                  : null)
+            : null;
 
-    /// <summary>Ошибка поля «Номер телефона»; null — ошибки нет.</summary>
+    /// <summary>
+    /// Ошибка поля «Номер телефона»: сначала формат, затем предупреждение
+    /// о занятом номере — по результату проверки в БД.
+    /// </summary>
     private string? PhoneError =>
-        phoneTouched ? RegistrationFormValidator.PhoneError(phone) : null;
+        phoneTouched
+            ? RegistrationFormValidator.PhoneError(phone)
+              ?? (phoneCheckState == ContactCheckState.Taken
+                  ? RegistrationFormValidator.DuplicatePhoneMessage
+                  : null)
+            : null;
 
-    /// <summary>Ошибка чек-бокса согласия; null — ошибки нет.</summary>
+    /// <summary>Ошибка чек-бокса согласия на обработку ПД; null — ошибки нет.</summary>
     private string? ConsentError =>
         consentTouched ? RegistrationFormValidator.ConsentError(consent) : null;
 
+    /// <summary>Ошибка чек-бокса согласия на обработку cookie; null — ошибки нет.</summary>
+    private string? CookieConsentError =>
+        cookieConsentTouched ? RegistrationFormValidator.CookieConsentError(cookieConsent) : null;
+
     /// <summary>
-    /// true — вся форма заполнена корректно: все поля валидны и дано согласие
-    /// на обработку персональных данных (RegistrationFormValidator.
-    /// IsApplicationValid). Кнопка «Подать заявку» активна только в этом
-    /// состоянии: свойство перевычисляется при каждом вводе, поэтому любое
-    /// исправление, делающее форму некорректной, снова блокирует кнопку.
+    /// true — вся форма готова к подаче: все поля валидны, оба согласия даны
+    /// и уникальность e-mail и телефона подтверждена проверкой в БД
+    /// (Available). Кнопка «Подать заявку» активна только в этом состоянии:
+    /// свойство перевычисляется при каждом вводе и завершении проверки,
+    /// поэтому любое исправление, делающее форму некорректной (удаление
+    /// данных, неверный формат, снятие согласия, изменение контакта),
+    /// снова блокирует кнопку — в том числе для повторной проверки
+    /// уникальности нового значения.
     /// </summary>
     private bool IsFormValid =>
-        RegistrationFormValidator.IsApplicationValid(lastName, firstName, patronymic, email, phone, consent);
+        RegistrationFormValidator.IsApplicationValid(
+            lastName, firstName, patronymic, email, phone, consent, cookieConsent)
+        && emailCheckState == ContactCheckState.Available
+        && phoneCheckState == ContactCheckState.Available;
+
+    /// <summary>
+    /// После каждого ввода e-mail сбрасывает результат предыдущей проверки
+    /// уникальности: значение изменилось, подтверждённая уникальность
+    /// больше не действует (вызывается @bind:after).
+    /// </summary>
+    private void OnEmailChanged()
+    {
+        if (emailCheckState != ContactCheckState.NotChecked)
+        {
+            emailCheckState = ContactCheckState.NotChecked;
+        }
+    }
 
     /// <summary>
     /// После каждого ввода телефона укладывает введённые цифры в маску
-    /// +7 (XXX) XXX-XX-XX (вызывается @bind:after).
+    /// +7 (XXX) XXX-XX-XX и сбрасывает результат предыдущей проверки
+    /// уникальности (вызывается @bind:after).
     /// </summary>
-    private void NormalizePhone()
+    private void OnPhoneChanged()
     {
         string masked = RegistrationFormValidator.ApplyPhoneMask(phone);
         if (masked != phone)
         {
             phone = masked;
+        }
+
+        if (phoneCheckState != ContactCheckState.NotChecked)
+        {
+            phoneCheckState = ContactCheckState.NotChecked;
+        }
+    }
+
+    /// <summary>
+    /// Обрабатывает касание поля «E-Mail» (blur): показывает ошибки формата
+    /// и при корректном формате запускает асинхронную проверку уникальности
+    /// адреса в таблице заявок. Повторные касания того же значения не
+    /// запускают новую проверку (состояние не NotChecked); во время проверки
+    /// кнопка подачи заблокирована.
+    /// </summary>
+    private async Task MarkEmailTouchedAsync()
+    {
+        emailTouched = true;
+
+        if (emailCheckState == ContactCheckState.NotChecked && RegistrationFormValidator.IsValidEmail(email))
+        {
+            await CheckEmailAvailabilityAsync();
+        }
+    }
+
+    /// <summary>
+    /// Обрабатывает касание поля «Номер телефона» (blur): показывает ошибки
+    /// формата/маски и при корректном формате запускает асинхронную проверку
+    /// уникальности номера в таблице заявок.
+    /// </summary>
+    private async Task MarkPhoneTouchedAsync()
+    {
+        phoneTouched = true;
+
+        if (phoneCheckState == ContactCheckState.NotChecked && RegistrationFormValidator.IsValidPhone(phone))
+        {
+            await CheckPhoneAvailabilityAsync();
+        }
+    }
+
+    /// <summary>
+    /// Проверяет уникальность текущего e-mail в таблице заявок: Available —
+    /// свободен, Taken — уже подана заявка с таким адресом (предупреждение
+    /// под полем, кнопка заблокирована). Результат устаревшего запроса
+    /// отбрасывается сравнением значения: если адрес изменился за время
+    /// проверки, состояние остаётся NotChecked — новое значение будет
+    /// проверено при следующем касании поля.
+    /// </summary>
+    private async Task CheckEmailAvailabilityAsync()
+    {
+        const string method = nameof(CheckEmailAvailabilityAsync);
+
+        string checkedEmail = email;
+        emailCheckState = ContactCheckState.Checking;
+
+        try
+        {
+            RegistrationContactCheckResult result =
+                await RegistrationRequests.CheckContactsAsync(checkedEmail, string.Empty);
+
+            if (email != checkedEmail)
+            {
+                // Значение изменилось во время проверки — результат устарел
+                return;
+            }
+
+            emailCheckState = result.EmailTaken ? ContactCheckState.Taken : ContactCheckState.Available;
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Отменённая проверка не завершена — уникальность не подтверждена
+            Log.Debug(ex, "Проверка e-mail отменена. Class={Class}, Method={Method}", ClassName, method);
+            emailCheckState = ContactCheckState.NotChecked;
+        }
+        catch (Exception ex)
+        {
+            // Ошибка проверки не списывается на пользователя: состояние
+            // возвращается к NotChecked, повторная попытка — следующее
+            // касание поля. Кнопка остаётся заблокированной: подача без
+            // подтверждённой уникальности невозможна
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
+            emailCheckState = ContactCheckState.NotChecked;
+        }
+    }
+
+    /// <summary>
+    /// Проверяет уникальность текущего телефона в таблице заявок —
+    /// аналогично e-mail (CheckEmailAvailabilityAsync).
+    /// </summary>
+    private async Task CheckPhoneAvailabilityAsync()
+    {
+        const string method = nameof(CheckPhoneAvailabilityAsync);
+
+        string checkedPhone = phone;
+        phoneCheckState = ContactCheckState.Checking;
+
+        try
+        {
+            RegistrationContactCheckResult result =
+                await RegistrationRequests.CheckContactsAsync(string.Empty, checkedPhone);
+
+            if (phone != checkedPhone)
+            {
+                // Значение изменилось во время проверки — результат устарел
+                return;
+            }
+
+            phoneCheckState = result.PhoneTaken ? ContactCheckState.Taken : ContactCheckState.Available;
+        }
+        catch (OperationCanceledException ex)
+        {
+            // Отменённая проверка не завершена — уникальность не подтверждена
+            Log.Debug(ex, "Проверка телефона отменена. Class={Class}, Method={Method}", ClassName, method);
+            phoneCheckState = ContactCheckState.NotChecked;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
+            phoneCheckState = ContactCheckState.NotChecked;
+        }
+    }
+
+    /// <summary>
+    /// Обрабатывает нажатие «Подать заявку»: записывает заявку в таблицу
+    /// webshelf.registration_requests (IRegistrationRequestService.SubmitAsync —
+    /// повторная проверка пермита, вставка, уменьшение счётчика только после
+    /// вставки, обе операции в одной транзакции). Идентификатор УЗ AD
+    /// записывается как NULL — заявка ожидает решения администратора.
+    /// Успех — форма заменяется сообщением «Заявка принята. Вход в систему
+    /// будет доступен после одобрения администратором.». Занятые контакты —
+    /// предупреждения под полями; недействительный пермит и ошибка сервера —
+    /// сообщение под кнопкой (без блокировки окна: ошибка не списывается
+    /// на пользователя).
+    /// </summary>
+    private async Task SubmitApplicationAsync()
+    {
+        const string method = nameof(SubmitApplicationAsync);
+
+        if (isSubmitting || isSubmitted || !IsFormValid)
+        {
+            return;
+        }
+
+        isSubmitting = true;
+        submitErrorMessage = string.Empty;
+
+        try
+        {
+            RegistrationApplication application = new(
+                lastName, firstName, patronymic, email, phone, Permit);
+
+            RegistrationSubmitResult result = await RegistrationRequests.SubmitAsync(application);
+
+            switch (result.Status)
+            {
+                case RegistrationSubmitStatus.Success:
+                {
+                    isSubmitted = true;
+                    break;
+                }
+
+                case RegistrationSubmitStatus.EmailTaken:
+                {
+                    // Гонка с параллельной подачей: адрес занят — предупреждение
+                    // под полем и блокировка кнопки (emailTouched уже true:
+                    // клик по кнопке снимает фокус с поля)
+                    emailCheckState = ContactCheckState.Taken;
+                    break;
+                }
+
+                case RegistrationSubmitStatus.PhoneTaken:
+                {
+                    phoneCheckState = ContactCheckState.Taken;
+                    break;
+                }
+
+                case RegistrationSubmitStatus.PermitNotUsable:
+                {
+                    submitErrorMessage = PermitNotUsableMessage;
+                    break;
+                }
+
+                default:
+                {
+                    submitErrorMessage = ServerErrorMessage;
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException ex)
+        {
+            Log.Debug(ex, "Подача заявки отменена. Class={Class}, Method={Method}", ClassName, method);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Исключение в {Class}.{Method}", ClassName, method);
+            submitErrorMessage = ServerErrorMessage;
+        }
+        finally
+        {
+            isSubmitting = false;
         }
     }
 
@@ -237,12 +605,9 @@
     /// <summary>Помечает поле «Отчество» тронутым (показ ошибок).</summary>
     private void MarkPatronymicTouched() => patronymicTouched = true;
 
-    /// <summary>Помечает поле «E-Mail» тронутым (показ ошибок).</summary>
-    private void MarkEmailTouched() => emailTouched = true;
-
-    /// <summary>Помечает поле «Номер телефона» тронутым (показ ошибок).</summary>
-    private void MarkPhoneTouched() => phoneTouched = true;
-
-    /// <summary>Помечает чек-бокс согласия тронутым (показ ошибок).</summary>
+    /// <summary>Помечает чек-бокс согласия на обработку ПД тронутым.</summary>
     private void MarkConsentTouched() => consentTouched = true;
+
+    /// <summary>Помечает чек-бокс согласия на обработку cookie тронутым.</summary>
+    private void MarkCookieConsentTouched() => cookieConsentTouched = true;
 }

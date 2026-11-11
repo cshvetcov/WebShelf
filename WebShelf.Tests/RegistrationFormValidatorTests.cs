@@ -121,27 +121,42 @@ public class RegistrationFormValidatorTests
     // --- IsApplicationValid: готовность всей формы (кнопка «Подать заявку») ---
 
     /// <summary>
-    /// Валидные данные всех полей и дано согласие — форма готова:
-    /// кнопка «Подать заявку» активна.
+    /// Валидные данные всех полей, даны оба согласия (персональные данные
+    /// и cookie) — форма готова: кнопка «Подать заявку» активна.
     /// </summary>
     [Fact]
-    public void IsApplicationValid_AllFieldsValidAndConsent_True()
+    public void IsApplicationValid_AllFieldsValidAndBothConsents_True()
     {
         bool valid = RegistrationFormValidator.IsApplicationValid(
-            "Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true);
+            "Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true, true);
 
         Assert.True(valid);
     }
 
     /// <summary>
-    /// Все поля валидны, но согласие не дано (снята галочка чек-бокса) —
-    /// форма не готова: кнопка деактивируется.
+    /// Все поля валидны, но согласие на обработку персональных данных
+    /// не дано (снята галочка чек-бокса) — форма не готова: кнопка
+    /// деактивируется.
     /// </summary>
     [Fact]
     public void IsApplicationValid_ConsentNotGiven_False()
     {
         bool valid = RegistrationFormValidator.IsApplicationValid(
-            "Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", false);
+            "Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", false, true);
+
+        Assert.False(valid);
+    }
+
+    /// <summary>
+    /// Все поля валидны, но согласие на обработку файлов cookie не дано —
+    /// форма не готова: правила обработки аналогичны согласию на обработку
+    /// персональных данных, снятая галочка блокирует кнопку.
+    /// </summary>
+    [Fact]
+    public void IsApplicationValid_CookieConsentNotGiven_False()
+    {
+        bool valid = RegistrationFormValidator.IsApplicationValid(
+            "Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true, false);
 
         Assert.False(valid);
     }
@@ -154,7 +169,7 @@ public class RegistrationFormValidatorTests
     public void IsApplicationValid_EmptyForm_False()
     {
         bool valid = RegistrationFormValidator.IsApplicationValid(
-            string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, false);
+            string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, false, false);
 
         Assert.False(valid);
     }
@@ -164,16 +179,16 @@ public class RegistrationFormValidatorTests
     /// кнопка деактивируется (каждая позиция по очереди заменяется пустой).
     /// </summary>
     [Theory]
-    [InlineData("", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true)]
-    [InlineData("Иванов", "", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true)]
-    [InlineData("Иванов", "Иван", "", "user@mail.ru", "+7 (999) 123-45-67", true)]
-    [InlineData("Иванов", "Иван", "Иванович", "", "+7 (999) 123-45-67", true)]
-    [InlineData("Иванов", "Иван", "Иванович", "user@mail.ru", "", true)]
+    [InlineData("", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true, true)]
+    [InlineData("Иванов", "", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true, true)]
+    [InlineData("Иванов", "Иван", "", "user@mail.ru", "+7 (999) 123-45-67", true, true)]
+    [InlineData("Иванов", "Иван", "Иванович", "", "+7 (999) 123-45-67", true, true)]
+    [InlineData("Иванов", "Иван", "Иванович", "user@mail.ru", "", true, true)]
     public void IsApplicationValid_AnyFieldCleared_False(
-        string lastName, string firstName, string patronymic, string email, string phone, bool consent)
+        string lastName, string firstName, string patronymic, string email, string phone, bool consent, bool cookieConsent)
     {
         bool valid = RegistrationFormValidator.IsApplicationValid(
-            lastName, firstName, patronymic, email, phone, consent);
+            lastName, firstName, patronymic, email, phone, consent, cookieConsent);
 
         Assert.False(valid);
     }
@@ -184,16 +199,16 @@ public class RegistrationFormValidatorTests
     /// валидной форме.
     /// </summary>
     [Theory]
-    [InlineData("Иванов1", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true)]
-    [InlineData("Иванов", "Иван1", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true)]
-    [InlineData("Иванов", "Иван", "Иванович1", "user@mail.ru", "+7 (999) 123-45-67", true)]
-    [InlineData("Иванов", "Иван", "Иванович", "user@mail", "+7 (999) 123-45-67", true)]
-    [InlineData("Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-6", true)]
+    [InlineData("Иванов1", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true, true)]
+    [InlineData("Иванов", "Иван1", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", true, true)]
+    [InlineData("Иванов", "Иван", "Иванович1", "user@mail.ru", "+7 (999) 123-45-67", true, true)]
+    [InlineData("Иванов", "Иван", "Иванович", "user@mail", "+7 (999) 123-45-67", true, true)]
+    [InlineData("Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-6", true, true)]
     public void IsApplicationValid_AnyFieldInvalidFormat_False(
-        string lastName, string firstName, string patronymic, string email, string phone, bool consent)
+        string lastName, string firstName, string patronymic, string email, string phone, bool consent, bool cookieConsent)
     {
         bool valid = RegistrationFormValidator.IsApplicationValid(
-            lastName, firstName, patronymic, email, phone, consent);
+            lastName, firstName, patronymic, email, phone, consent, cookieConsent);
 
         Assert.False(valid);
     }
@@ -206,7 +221,7 @@ public class RegistrationFormValidatorTests
     public void IsApplicationValid_TrailingSpacesInFields_True()
     {
         bool valid = RegistrationFormValidator.IsApplicationValid(
-            " Иванов ", " Иван ", " Иванович ", " user@mail.ru ", " +7 (999) 123-45-67 ", true);
+            " Иванов ", " Иван ", " Иванович ", " user@mail.ru ", " +7 (999) 123-45-67 ", true, true);
 
         Assert.True(valid);
     }
@@ -287,6 +302,28 @@ public class RegistrationFormValidatorTests
     public void ConsentError_Consented_ReturnsNull()
     {
         Assert.Null(RegistrationFormValidator.ConsentError(true));
+    }
+
+    [Fact]
+    public void CookieConsentError_NotConsented_ReturnsMessage()
+    {
+        Assert.Equal("Необходимо согласие на обработку файлов cookie.",
+            RegistrationFormValidator.CookieConsentError(false));
+    }
+
+    [Fact]
+    public void CookieConsentError_Consented_ReturnsNull()
+    {
+        Assert.Null(RegistrationFormValidator.CookieConsentError(true));
+    }
+
+    [Fact]
+    public void DuplicateMessages_NonEmpty()
+    {
+        // Тексты предупреждений о занятых контактах показываются под полями
+        // e-mail и телефона — пустая строка означала бы «молчаливую» блокировку
+        Assert.False(string.IsNullOrWhiteSpace(RegistrationFormValidator.DuplicateEmailMessage));
+        Assert.False(string.IsNullOrWhiteSpace(RegistrationFormValidator.DuplicatePhoneMessage));
     }
 
     // --- ApplyPhoneMask: маска +7 (XXX) XXX-XX-XX по мере ввода ---

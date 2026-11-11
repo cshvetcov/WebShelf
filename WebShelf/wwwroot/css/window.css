@@ -344,6 +344,14 @@ body.ws-window-page {
     font-variant-numeric: tabular-nums;
 }
 
+/* Сообщение об успешной подаче заявки на регистрацию (заявка записана,
+   ожидает решения администратора) */
+.ws-message-success {
+    background: rgba(30, 120, 75, 0.25);
+    border: 1px solid rgba(70, 190, 125, 0.4);
+    color: #B4F2CD;
+}
+
 /* Чекбокс «Запомнить» */
 .ws-form-check {
     display: flex;

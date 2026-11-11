@@ -380,6 +380,14 @@ try
     // через public-конструктор
     builder.Services.AddSingleton(new RegistrationPermitChecker(database));
 
+    // Запись заявок на регистрацию (webshelf.registration_requests): проверка
+    // уникальности контактов и подача заявки одной транзакцией (повторная
+    // проверка пермита, вставка, уменьшение счётчика после вставки).
+    // Форма заявки зависит от интерфейса (подмена в тестах), готовый
+    // singleton — как RegistrationPermitChecker
+    builder.Services.AddSingleton<IRegistrationRequestService>(
+        new RegistrationRequestService(database, policyContentService));
+
     // Журнал версий политик: страницы политик (CookiePolicy, PersonalDataPolicy,
     // PolicyArchive) и баннер согласия получают тексты редакций через
     // IPolicyContentSource — готовый singleton-экземпляр, синхронизированный
