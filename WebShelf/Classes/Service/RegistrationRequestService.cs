@@ -124,9 +124,24 @@ internal sealed class RegistrationRequestService(Database database, IPolicyConte
             {
                 await transaction.RollbackAsync(cancellationToken);
 
-                Log.Warning(
-                    "Подача заявки отклонена: пермит недействителен или исчерпан. Counter={Counter}. Class={Class}, Method={Method}",
-                    counter ?? 0, ClassName, method);
+                // Диагностика различает два случая: пермит отсутствует
+                // в таблице (не найден) и найден, но счётчик равен нулю
+                // (исчерпан). Для пользователя сообщение одно — раскрытие
+                // разницы упростило бы перебор ключей; причина видна только
+                // в логе. Значение пермита не логируется (правило маскировки)
+                if (counter is null)
+                {
+                    Log.Warning(
+                        "Подача заявки отклонена: пермит не найден в таблице registration_permits (нет строки с точным совпадением). Class={Class}, Method={Method}",
+                        ClassName, method);
+                }
+                else
+                {
+                    Log.Warning(
+                        "Подача заявки отклонена: пермит найден, счётчик исчерпан. Counter={Counter}. Class={Class}, Method={Method}",
+                        counter.Value, ClassName, method);
+                }
+
                 return RegistrationSubmitResult.FromStatus(RegistrationSubmitStatus.PermitNotUsable);
             }
 

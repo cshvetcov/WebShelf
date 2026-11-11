@@ -257,6 +257,52 @@ public class RegistrationRequestServiceTests
     }
 
     /// <summary>
+    /// Сквозной сценарий окна заявки: пермит, вставленный в БД напрямую
+    /// (как через DBeaver) и прошедший проверку активации
+    /// (RegistrationPermitChecker.CheckAsync — то же значение, тот же
+    /// экземпляр Database, что и в приложении), проходит и повторную
+    /// проверку при подаче — заявка записывается, счётчик уменьшается
+    /// ровно на 1. Регрессионный тест связи «активация → подача».
+    /// </summary>
+    [PostgresFact]
+    public async Task SubmitAsync_PermitThatPassedActivationCheck_RecordsRequestAndDecrementsCounter()
+    {
+        await using DbTestHelpers.TestDatabaseLease lease = await DbTestHelpers.CreateTestDatabaseAsync();
+        (Database database, RegistrationRequestService service, string workDirectory) = await CreateTestContextAsync(lease);
+
+        try
+        {
+            const string permit = "123456789";
+            await InsertPermitAsync(database, permit, 10);
+
+            // Шаг окна «Активация разрешения»: проверка пермита тем же
+            // сервисом и тем же подключением, что использует страница /entry
+            RegistrationPermitChecker checker = new(database);
+            RegistrationPermitCheckResult activation = await checker.CheckAsync(permit);
+
+            Assert.True(activation.IsUsable);
+            Assert.Equal(10, activation.Counter);
+
+            // Шаг окна «Подача заявки»: форма передаёт проверенный пермит
+            // параметром (Entry.activePermit) — значение не меняется
+            RegistrationApplication application = new(
+                "Иванов", "Иван", "Иванович", "user@mail.ru", "+7 (999) 123-45-67", permit);
+
+            RegistrationSubmitResult result = await service.SubmitAsync(application);
+
+            Assert.True(result.IsSuccess);
+            Assert.True(result.RequestId > 0);
+            Assert.Equal(1L, await CountRequestsAsync(database));
+            Assert.Equal(9, await ReadPermitCounterAsync(database, permit));
+        }
+        finally
+        {
+            await database.DisposeAsync();
+            TryDeleteDirectory(workDirectory);
+        }
+    }
+
+    /// <summary>
     /// Заявка с таким e-mail уже подана — новая не записывается, счётчик
     /// пермита не тратится (дружелюбная диагностика до вставки).
     /// </summary>

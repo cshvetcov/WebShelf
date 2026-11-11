@@ -212,6 +212,70 @@ body.ws-window-page {
                 box-shadow: 0 0 0 3px rgba(180, 40, 40, 0.2);
             }
 
+        /* Автозаполнение браузера (Chromium/Edge/Safari — :-webkit-autofill,
+           Firefox — :autofill): браузер закрашивает автозаполненное поле
+           собственной светлой заливкой (в Chromium — с !important, обычным
+           background её не переопределить) и тёмным текстом. На тёмной теме
+           поле выглядит «перекрашенным» рядом с остальными (например, e-mail
+           в форме заявки, автозаполняемый из сохранённых данных браузера).
+           Заливка перекрывается inset-тенью цвета фона поля (рисуется поверх
+           фона браузера), текст и каретка возвращаются светлыми —
+           автозаполненное поле неотличимо от обычного во всех состояниях
+           (фокус и ошибка валидации сохраняют свои рамки и свечения).
+           transition с огромной задержкой дополнительно не даёт Chromium
+           перекрасить background-color после автозаполнения. */
+        .ws-window-body input[type="text"]:-webkit-autofill,
+        .ws-window-body input[type="password"]:-webkit-autofill,
+        .ws-window-body input[type="email"]:-webkit-autofill,
+        .ws-window-body input[type="tel"]:-webkit-autofill,
+        .ws-window-body input[type="text"]:-webkit-autofill:hover,
+        .ws-window-body input[type="password"]:-webkit-autofill:hover,
+        .ws-window-body input[type="email"]:-webkit-autofill:hover,
+        .ws-window-body input[type="tel"]:-webkit-autofill:hover,
+        .ws-window-body input[type="text"]:autofill,
+        .ws-window-body input[type="password"]:autofill,
+        .ws-window-body input[type="email"]:autofill,
+        .ws-window-body input[type="tel"]:autofill {
+            -webkit-text-fill-color: #F0F0F0;
+            caret-color: #F0F0F0;
+            -webkit-box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.28) inset;
+            box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.28) inset;
+            transition: background-color 9999s ease-out, border-color 0.2s, box-shadow 0.2s;
+        }
+
+        /* Фокус автозаполненного поля: заливка темнее (как у обычного фокуса)
+           и сохранено кольцо фокуса — inset-тень и кольцо объединены */
+        .ws-window-body input[type="text"]:-webkit-autofill:focus,
+        .ws-window-body input[type="password"]:-webkit-autofill:focus,
+        .ws-window-body input[type="email"]:-webkit-autofill:focus,
+        .ws-window-body input[type="tel"]:-webkit-autofill:focus,
+        .ws-window-body input[type="text"]:autofill:focus,
+        .ws-window-body input[type="password"]:autofill:focus,
+        .ws-window-body input[type="email"]:autofill:focus,
+        .ws-window-body input[type="tel"]:autofill:focus {
+            -webkit-text-fill-color: #F0F0F0;
+            caret-color: #F0F0F0;
+            -webkit-box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.38) inset, 0 0 0 3px rgba(10, 89, 102, 0.25);
+            box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.38) inset, 0 0 0 3px rgba(10, 89, 102, 0.25);
+            transition: background-color 9999s ease-out, border-color 0.2s, box-shadow 0.2s;
+        }
+
+        /* Ошибка валидации автозаполненного поля: заливка обычная, красная
+           рамка и свечение ошибки сохранены (правило выше по специфичности
+           перекрыло бы их) */
+        .ws-window-body input.ws-input-invalid:-webkit-autofill,
+        .ws-window-body input.ws-input-invalid:-webkit-autofill:hover,
+        .ws-window-body input.ws-input-invalid:autofill {
+            -webkit-box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.28) inset;
+            box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.28) inset;
+        }
+
+        .ws-window-body input.ws-input-invalid:-webkit-autofill:focus,
+        .ws-window-body input.ws-input-invalid:autofill:focus {
+            -webkit-box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.28) inset, 0 0 0 3px rgba(180, 40, 40, 0.2);
+            box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.28) inset, 0 0 0 3px rgba(180, 40, 40, 0.2);
+        }
+
 /* Кнопка показа/скрытия пароля */
 .ws-toggle-password {
     position: absolute;
